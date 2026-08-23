@@ -64,6 +64,28 @@ function readBody(req) {
   });
 }
 
+/* read the head of a session file to extract a title (ai-title row, or the
+   first user message). Cheap: only reads the first 64 KB. */
+function sessionTitle(file) {
+  try {
+    const fd = fs.openSync(file, "r");
+    const buf = Buffer.alloc(64 * 1024);
+    const bytes = fs.readSync(fd, buf, 0, buf.length, 0);
+    fs.closeSync(fd);
+    const head = buf.toString("utf8", 0, bytes);
+    for (const line of head.split("\n")) {
+      let o;
+      try { o = JSON.parse(line); } catch (e) { continue; }
+      if (o && o.type === "ai-title" && o.title) return o.title;
+      if (o && o.type === "user" && o.message && typeof o.message.content === "string"
+          && o.message.content.trim() && !o.isMeta) {
+        return o.message.content.trim().slice(0, 60);
+      }
+    }
+  } catch (e) {}
+  return "";
+}
+
 /* recursively collect .jsonl files under a dir, newest first */
 function scanSessions(dir) {
   const out = [];
@@ -85,7 +107,10 @@ function scanSessions(dir) {
         if (rel && rel !== ".") {
           folder = rel.split(path.sep)[0];
         }
-        out.push({ sessionId, file: p, name: ent.name, mtime, folder });
+        out.push({
+          sessionId, file: p, name: ent.name, mtime, folder,
+          title: sessionTitle(p),
+        });
       }
     }
   };

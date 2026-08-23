@@ -58,6 +58,9 @@
     if (s.firstTs && s.lastTs) {
       return `${fmtDate(s.firstTs)} ${fmtClock(s.firstTs)}`;
     }
+    if (s.mtime) {
+      return `${fmtDate(s.mtime)} ${fmtClock(s.mtime)}`;
+    }
     return "—";
   }
 
@@ -75,7 +78,7 @@
     title.innerHTML = escapeHtml(s.title);
     const pill = document.createElement("span");
     pill.className = "pill";
-    pill.textContent = " · " + s.stats.total + " 条";
+    pill.textContent = s.loaded ? " · " + (s.stats ? s.stats.total : 0) + " 条" : " · …";
     title.appendChild(pill);
 
     const meta = document.createElement("div");
@@ -83,15 +86,15 @@
     meta.innerHTML =
       `<span class="mono">${escapeHtml(sessionTimeLabel(s))}</span>` +
       `<span class="dot"></span>` +
-      `<span class="si-tag">${escapeHtml(s.file.replace(/\.jsonl$/i, "").slice(0, 22))}</span>`;
+      `<span class="si-tag">${escapeHtml((s.file || "").replace(/\.jsonl$/i, "").slice(0, 22))}</span>`;
 
     const counts = document.createElement("div");
     counts.className = "si-counts";
     const stat = s.stats;
     const parts = [];
-    if (stat.user) parts.push(`<span>👤 ${stat.user}</span>`);
-    if (stat.ai) parts.push(`<span>🤖 ${stat.ai}</span>`);
-    if (stat.tool) parts.push(`<span>🔧 ${stat.tool}</span>`);
+    if (stat && stat.user) parts.push(`<span>👤 ${stat.user}</span>`);
+    if (stat && stat.ai) parts.push(`<span>🤖 ${stat.ai}</span>`);
+    if (stat && stat.tool) parts.push(`<span>🔧 ${stat.tool}</span>`);
     counts.innerHTML = parts.join("");
 
     const del = document.createElement("button");
@@ -249,6 +252,23 @@
       $("#scrub").hidden = true;
       return;
     }
+
+    // lazy-load: metadata-only session not parsed yet → placeholder + fetch
+    if (!s.loaded) {
+      chatTitle.textContent = s.title;
+      chatMeta.textContent = s._loading ? "正在加载内容…" : "点击查看会话内容";
+      chatEmpty.style.display = "flex";
+      chatEmpty.innerHTML =
+        `<div class="empty-ring${s._loading ? " spin" : ""}"></div>` +
+        `<h2>${escapeHtml(s._loading ? "正在加载会话…" : "会话未加载")}</h2>` +
+        `<p class="dim">${escapeHtml(s._loading ? "拉取并解析完整内容…" : "单击以加载完整内容")}</p>`;
+      $("#chatId").hidden = true;
+      $("#cidFile").textContent = "";
+      $("#scrub").hidden = true;
+      if (!s._loading) loadSession(s);
+      return;
+    }
+
     chatTitle.textContent = s.title;
     chatMeta.textContent =
       `${s.stats.total} 条消息 · ${s.stats.user} 用户 · ${s.stats.ai} AI · ${s.stats.tool} 工具 · ${fmtDate(s.firstTs)}`;
@@ -525,6 +545,7 @@
   function buildIndex() {
     index = [];
     sessions.forEach((s) => {
+      if (!s.loaded) return; // only index parsed sessions
       s.messages.forEach((m, mi) => {
         if (m.kind === "user") {
           index.push({ sid: s.id, midx: mi, bidx: -1, kind: "user", title: "用户 · " + s.title, text: m.text });
@@ -789,7 +810,8 @@
     });
   };
 
-  // load every session listed by the backend, preserving order
+  // Load only the session index (metadata) — near-instant. Full content is
+  // fetched lazily when a session is opened (see loadSession).
   async function loadAllFromBackend() {
     showLoading("正在加载会话…");
     let res;
@@ -803,21 +825,55 @@
     selectedId = null;
     renderSidebar();
     renderChat();
-    const list = data.sessions;
-    for (const item of list) {
-      try {
-        const raw = await fetch(`/api/sessions/raw?file=${encodeURIComponent(item.file)}`).then((r) => r.text());
-        const s = parse(raw, item.name);
-        if (s.messages.length) {
-          const rec = Object.assign({ id: "s" + (++seq), file: item.name, folder: item.folder || "" }, s);
-          rec.origin = "backend";
-          sessions.unshift(rec);
-        }
-      } catch (e) {}
+    for (const item of data.sessions) {
+      sessions.push({
+        id: "s" + (++seq),
+        file: item.name,
+        backendFile: item.file,
+        folder: item.folder || "",
+        title: item.title || item.name.replace(/\.jsonl$/i, ""),
+        sessionId: item.sessionId,
+        mtime: item.mtime,
+        loaded: false,
+        _loading: false,
+      });
     }
     renderSidebar();
     if (sessions.length) selectSession(sessions[0].id);
     return sessions.length;
+  }
+
+  // Fetch + parse a single session's full content on demand.
+  async function loadSession(s) {
+    if (s.loaded || s._loading) return;
+    s._loading = true;
+    renderChat(); // show loading placeholder
+    try {
+      const raw = await fetch(`/api/sessions/raw?file=${encodeURIComponent(s.backendFile)}`).then((r) => r.text());
+      const parsed = parse(raw, s.file);
+      if (parsed.messages.length) {
+        s.messages = parsed.messages;
+        s.stats = parsed.stats;
+        s.firstTs = parsed.firstTs;
+        s.lastTs = parsed.lastTs;
+        if (parsed.title) s.title = parsed.title;
+        if (parsed.sessionId) s.sessionId = parsed.sessionId;
+      } else {
+        s.messages = [];
+        s.stats = { tool: 0, ai: 0, user: 0, thinking: 0, total: 0 };
+      }
+    } catch (e) {
+      s.messages = [];
+      s.stats = { tool: 0, ai: 0, user: 0, thinking: 0, total: 0 };
+    }
+    s.loaded = true;
+    s._loading = false;
+    renderChat();
+    renderSidebar();
+    if (!searchPanel.hidden) {
+      buildIndex();
+      renderSearch();
+    }
   }
 
   /* ---------- settings modal ---------- */
