@@ -825,6 +825,61 @@
 
   applySidebarState();
 
+  /* ---------- export session as plain text ---------- */
+  function exportSession(s) {
+    const fmtT = (t) => {
+      const d = new Date(t);
+      if (isNaN(d)) return "";
+      const p = (n) => String(n).padStart(2, "0");
+      return `${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
+    };
+    const lines = [];
+    lines.push(`===== 会话：${s.title} =====`);
+    if (s.sessionId) lines.push(`sessionId: ${s.sessionId}`);
+    lines.push(`文件：${s.file || ""}`);
+    lines.push("");
+
+    for (const m of s.messages) {
+      if (m.kind === "user") {
+        lines.push(`[${fmtT(m.timestamp)}]用户：${m.text}`);
+      } else if (m.kind === "assistant") {
+        const blocks = m.blocks || [];
+        const parts = [];
+        for (const b of blocks) {
+          if (b.kind === "thinking" && b.text) {
+            parts.push(`<thinking>${b.text}</thinking>`);
+          } else if (b.kind === "text" && b.text) {
+            parts.push(b.text);
+          } else if (b.kind === "tool_use") {
+            let input = "";
+            try { input = JSON.stringify(b.input, null, 2); } catch (e) { input = String(b.input); }
+            parts.push(`<tool>${b.name}${input ? "\n" + input : ""}</tool>`);
+          }
+        }
+        if (parts.length) {
+          lines.push(`[${fmtT(m.timestamp)}]AI：${parts.join("\n")}`);
+        }
+      }
+    }
+    return lines.join("\n");
+  }
+
+  $("#exportBtn").addEventListener("click", () => {
+    const s = sessions.find((x) => x.id === selectedId);
+    if (!s || !s.loaded) {
+      alert("请先选择一个已加载的会话");
+      return;
+    }
+    const text = exportSession(s);
+    const blob = new Blob([text], { type: "text/plain;charset=utf-8" });
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = `${(s.file || "session").replace(/\.jsonl$/i, "")}.txt`;
+    document.body.appendChild(a);
+    a.click();
+    setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 300);
+  });
+
   /* ---------- events ---------- */
   // drag & drop .jsonl files anywhere → load like 导入会话
   const dropOverlay = $("#dropOverlay");
