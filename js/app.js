@@ -887,8 +887,8 @@
     });
   };
 
-  // Load only the session index (metadata) — near-instant. Full content is
-  // fetched lazily when a session is opened (see loadSession).
+  // Load the session index from the backend. Cached (previously parsed)
+  // sessions restore instantly; the rest load in the background.
   async function loadAllFromBackend() {
     showLoading("正在加载会话…");
     let res;
@@ -902,8 +902,9 @@
     selectedId = null;
     renderSidebar();
     renderChat();
-    for (const item of data.sessions) {
-      sessions.push({
+    const cachedCounts = { hit: 0, miss: 0 };
+    await Promise.all(data.sessions.map(async (item) => {
+      const rec = {
         id: "s" + (++seq),
         file: item.name,
         backendFile: item.file,
@@ -913,10 +914,35 @@
         mtime: item.mtime,
         loaded: false,
         _loading: false,
-      });
-    }
+      };
+      // restore from cache when the cached mtime matches the current file
+      try {
+        const cached = await SessionCache.get(item.file);
+        if (cached && cached.mtime === item.mtime) {
+          Object.assign(rec, {
+            messages: cached.messages,
+            stats: cached.stats,
+            firstTs: cached.firstTs,
+            lastTs: cached.lastTs,
+            title: cached.title || rec.title,
+            sessionId: cached.sessionId || rec.sessionId,
+            loaded: true,
+          });
+          cachedCounts.hit++;
+        } else {
+          cachedCounts.miss++;
+        }
+      } catch (e) {
+        cachedCounts.miss++;
+      }
+      sessions.push(rec);
+    }));
     renderSidebar();
     if (sessions.length) selectSession(sessions[0].id);
+    // background fill for the ones we didn't have cached
+    if (cachedCounts.miss) {
+      preloadAll();
+    }
     return sessions.length;
   }
 
@@ -945,6 +971,18 @@
     }
     s.loaded = true;
     s._loading = false;
+    // persist for next visit
+    try {
+      await SessionCache.put(s.backendFile, {
+        mtime: s.mtime,
+        messages: s.messages,
+        stats: s.stats,
+        title: s.title,
+        firstTs: s.firstTs,
+        lastTs: s.lastTs,
+        sessionId: s.sessionId,
+      });
+    } catch (e) {}
     if (silent) return;
     renderChat();
     renderSidebar();
@@ -983,6 +1021,52 @@
       setTimeout(step, 20);
     };
     step();
+  }
+
+  // Poll the backend for new/changed sessions and load the deltas incrementally.
+  let pollTimer = null;
+  function startPolling() {
+    if (pollTimer) return;
+    pollTimer = setInterval(async () => {
+      try {
+        const res = await fetch("/api/sessions");
+        if (!res.ok) return;
+        const data = await res.json();
+        if (!data || !data.sessions) return;
+        const byFile = new Map(data.sessions.map((s) => [s.file, s]));
+        let changed = false;
+        for (const item of data.sessions) {
+          const existing = sessions.find((x) => x.backendFile === item.file);
+          if (!existing) {
+            // brand-new session file appeared
+            const rec = {
+              id: "s" + (++seq),
+              file: item.name,
+              backendFile: item.file,
+              folder: item.folder || "",
+              title: item.title || item.name.replace(/\.jsonl$/i, ""),
+              sessionId: item.sessionId,
+              mtime: item.mtime,
+              loaded: false,
+              _loading: false,
+            };
+            sessions.unshift(rec);
+            changed = true;
+            loadSession(rec, true);
+          } else if (existing.mtime !== item.mtime) {
+            // file changed on disk → refresh content
+            existing.mtime = item.mtime;
+            existing.loaded = false;
+            changed = true;
+            loadSession(existing, true);
+          }
+        }
+        if (changed) {
+          renderSidebar();
+          if (!searchPanel.hidden) { buildIndex(); renderSearch(); }
+        }
+      } catch (e) {}
+    }, 8000);
   }
 
   /* ---------- settings modal ---------- */
@@ -1052,6 +1136,6 @@
       return;
     }
     await loadAllFromBackend();
-    preloadAll();
+    startPolling();
   })();
 })();

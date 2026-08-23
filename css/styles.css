@@ -238,6 +238,7 @@ code, kbd, .mono { font-family: var(--mono); }
   display: inline-flex; align-items: center; gap: 5px;
   font-family: var(--mono); font-size: 10px; color: var(--teal-deep);
 }
+.load-progress[hidden] { display: none; }
 .load-progress::before {
   content: ""; width: 8px; height: 8px; border-radius: 50%;
   border: 1.5px solid var(--teal);
