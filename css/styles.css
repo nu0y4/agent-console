@@ -232,6 +232,17 @@ code, kbd, .mono { font-family: var(--mono); }
   border-radius: 6px;
   overflow: hidden;
 }
+.load-progress {
+  display: inline-flex; align-items: center; gap: 5px;
+  font-family: var(--mono); font-size: 10px; color: var(--teal-deep);
+}
+.load-progress::before {
+  content: ""; width: 8px; height: 8px; border-radius: 50%;
+  border: 1.5px solid var(--teal);
+  border-top-color: transparent;
+  animation: spin 0.7s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
 .sort-opt {
   height: 20px; padding: 0 8px;
   border: none; background: transparent;

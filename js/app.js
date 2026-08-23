@@ -921,10 +921,10 @@
   }
 
   // Fetch + parse a single session's full content on demand.
-  async function loadSession(s) {
+  async function loadSession(s, silent) {
     if (s.loaded || s._loading) return;
     s._loading = true;
-    renderChat(); // show loading placeholder
+    if (!silent) renderChat(); // show loading placeholder
     try {
       const raw = await fetch(`/api/sessions/raw?file=${encodeURIComponent(s.backendFile)}`).then((r) => r.text());
       const parsed = parse(raw, s.file);
@@ -945,12 +945,44 @@
     }
     s.loaded = true;
     s._loading = false;
+    if (silent) return;
     renderChat();
     renderSidebar();
     if (!searchPanel.hidden) {
       buildIndex();
       renderSearch();
     }
+  }
+
+  // Background preload: fills in every not-yet-loaded session in chunks so the
+  // UI stays responsive while the sidebar counts fill up.
+  const loadProgressEl = $("#loadProgress");
+  let preloadToken = 0;
+  function preloadAll() {
+    const token = ++preloadToken;
+    const queue = sessions.filter((s) => !s.loaded && !s._loading);
+    if (!queue.length) return;
+    loadProgressEl.hidden = false;
+    let done = 0;
+    const total = queue.length;
+    const CHUNK = 6;
+    const step = async () => {
+      if (token !== preloadToken) return; // superseded
+      const slice = queue.slice(done, done + CHUNK);
+      if (!slice.length) {
+        loadProgressEl.hidden = true;
+        renderSidebar();
+        buildIndex();
+        return;
+      }
+      await Promise.all(slice.map((s) => loadSession(s, true)));
+      done += slice.length;
+      loadProgressEl.textContent = `${done}/${total}`;
+      renderSidebar();
+      // let the browser breathe between chunks
+      setTimeout(step, 20);
+    };
+    step();
   }
 
   /* ---------- settings modal ---------- */
@@ -995,7 +1027,7 @@
       settingsStatus.textContent = "已保存，正在扫描会话…";
       const count = await loadAllFromBackend();
       settingsStatus.textContent = count ? `已加载 ${count} 个会话` : "目录下未发现会话文件";
-      if (count) setTimeout(closeSettings, 800);
+      if (count) { preloadAll(); setTimeout(closeSettings, 800); }
     } catch (e) {
       settingsStatus.textContent = "保存失败：" + (e.message || e);
       settingsStatus.className = "modal-status err";
@@ -1020,5 +1052,6 @@
       return;
     }
     await loadAllFromBackend();
+    preloadAll();
   })();
 })();
