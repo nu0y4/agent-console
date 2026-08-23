@@ -167,6 +167,33 @@ const server = http.createServer(async (req, res) => {
       }
     }
 
+    /* --- search via ripgrep (fast, handles all files at once) --- */
+    if (p === "/api/search") {
+      const q = url.searchParams.get("q");
+      if (!q) return sendJson(res, 400, { error: "missing q" });
+      const cfg = readConfig();
+      const dir = cfg.sessionDir;
+      const { spawnSync } = require("child_process");
+      // -l list files, -i case-insensitive, -S smart case, -a treat all as text
+      const rg = spawnSync("rg", ["-l", "-i", "-a", "--no-messages", q, dir], {
+        encoding: "utf8",
+        timeout: 15000,
+        maxBuffer: 8 * 1024 * 1024,
+        windowsHide: true,
+      });
+      const out = (rg.stdout || "").split("\n").map((s) => s.trim()).filter(Boolean);
+      // map back to scan entries so the frontend has titles/folders
+      const entries = scanSessions(dir);
+      const byFile = new Map(entries.map((e) => [e.file, e]));
+      const hits = out
+        .map((file) => {
+          const e = byFile.get(file);
+          return e || { file, name: path.basename(file), sessionId: path.basename(file).replace(/\.jsonl$/i, ""), folder: "", title: path.basename(file), mtime: 0 };
+        })
+        .sort((a, b) => b.mtime - a.mtime);
+      return sendJson(res, 200, { q, count: hits.length, sessions: hits });
+    }
+
     /* --- static --- */
     let file = p === "/" ? "/index.html" : p;
     // prevent path traversal

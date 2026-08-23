@@ -309,6 +309,7 @@ code, kbd, .mono { font-family: var(--mono); }
 .si-meta .dot { width: 3px; height: 3px; border-radius: 50%; background: var(--text-faint); }
 .si-counts { display: flex; gap: 8px; font-size: 11px; color: var(--text-dim); font-family: var(--mono); }
 .si-counts span { display: inline-flex; align-items: center; gap: 3px; }
+.mini-ic { width: 11px; height: 11px; stroke: currentColor; fill: none; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
 .si-del {
   position: absolute; right: 8px; top: 8px;
   width: 20px; height: 20px; border-radius: 5px;

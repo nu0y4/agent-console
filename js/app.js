@@ -92,9 +92,9 @@
     counts.className = "si-counts";
     const stat = s.stats;
     const parts = [];
-    if (stat && stat.user) parts.push(`<span>👤 ${stat.user}</span>`);
-    if (stat && stat.ai) parts.push(`<span>🤖 ${stat.ai}</span>`);
-    if (stat && stat.tool) parts.push(`<span>🔧 ${stat.tool}</span>`);
+    if (stat && stat.user) parts.push(`<span>${miniSvg("user")} ${stat.user}</span>`);
+    if (stat && stat.ai) parts.push(`<span>${miniSvg("ai")} ${stat.ai}</span>`);
+    if (stat && stat.tool) parts.push(`<span>${miniSvg("tool")} ${stat.tool}</span>`);
     counts.innerHTML = parts.join("");
 
     const del = document.createElement("button");
@@ -230,6 +230,16 @@
       glob: '<circle cx="6" cy="6" r="3"/><circle cx="14" cy="6" r="3"/><circle cx="6" cy="14" r="3"/><circle cx="14" cy="14" r="3"/>',
     }[n] || '<circle cx="8" cy="8" r="5"/><path d="M12 12l4 4"/>';
     return `<svg viewBox="0 0 16 16">${svg}</svg>`;
+  }
+
+  // tiny stat icons for the sidebar counts
+  function miniSvg(kind) {
+    const paths = {
+      user: '<circle cx="8" cy="5.5" r="3"/><path d="M2.5 14c.8-2.8 3-4 5.5-4s4.7 1.2 5.5 4"/>',
+      ai: '<path d="M8 2l1.2 2.6 2.8.4-2 2 .5 2.8L8 8.6 5.5 9.8l.5-2.8-2-2 2.8-.4z"/><path d="M3.5 11l.4.9M12.5 11l-.4.9M8 13v1.2"/>',
+      tool: '<path d="M14.5 5.5a3.4 3.4 0 0 1-4.6 4.6L4 16 0 12l5.9-5.9a3.4 3.4 0 0 1 4.6-4.6L7.5 4.5 11.5 8.5z"/>',
+    }[kind] || "";
+    return `<svg class="mini-ic" viewBox="0 0 16 16">${paths}</svg>`;
   }
 
   function showLoading(text) {
@@ -582,20 +592,60 @@
     });
   }
 
-  function runSearch(query, filter) {
-    const tokens = tokenize(query);
-    if (!tokens.length) return [];
-    const out = [];
-    for (const e of index) {
-      if (filter === "tool" && e.kind !== "tool") continue;
-      if (filter === "ai" && e.kind !== "ai") continue;
-      if (filter === "user" && e.kind !== "user") continue;
-      if (filter === "thinking" && e.kind !== "thinking") continue;
-      const src = normalize(e.text);
-      const nTokens = tokens.map(normalize);
-      if (nTokens.every((t) => src.includes(t))) out.push(e);
+  // rg-backed search: the backend greps the whole session folder and returns
+  // matching files; results render immediately (not gated on the preload).
+  let searchSeq = 0;
+  async function runSearch(query, filter) {
+    const q = query.trim();
+    if (!q) return [];
+    const seq = ++searchSeq;
+    const res = await fetch(`/api/search?q=${encodeURIComponent(q)}`).catch(() => null);
+    if (!res || !res.ok) return [];
+    const data = await res.json().catch(() => null);
+    if (!data || !data.sessions) return [];
+    if (seq !== searchSeq) return []; // superseded by a newer keystroke
+
+    // keep it fast: only sniff the matched files for the type filter
+    const items = filter === "all" ? data.sessions : [];
+    if (filter !== "all") {
+      for (const item of data.sessions) {
+        const existing = sessions.find((x) => x.backendFile === item.file);
+        if (existing && existing.loaded) {
+          if (sessionMatches(existing, q, filter)) items.push(item);
+          continue;
+        }
+        try {
+          const raw = await fetch(`/api/sessions/raw?file=${encodeURIComponent(item.file)}`).then((r) => r.text());
+          const parsed = parse(raw, item.name);
+          if (sessionMatches({ messages: parsed.messages }, q, filter)) items.push(item);
+        } catch (e) {}
+        if (items.length > 200) break;
+      }
     }
-    return out;
+    return items.map((item) => ({
+      sid: item.file,
+      backendFile: item.file,
+      title: item.title || item.file,
+      folder: item.folder || "",
+    }));
+  }
+
+  function sessionMatches(s, q, filter) {
+    const tokens = tokenize(q).map(normalize);
+    const hit = (text) => tokens.every((t) => normalize(text).includes(t));
+    for (const m of s.messages) {
+      if (filter === "user") { if (m.kind === "user" && hit(m.text)) return true; continue; }
+      if (m.kind !== "assistant") continue;
+      for (const b of m.blocks) {
+        if (filter === "tool" && b.kind === "tool_use") {
+          let j = "";
+          try { j = JSON.stringify(b.input); } catch (e) {}
+          if (hit(b.name + "\n" + j)) return true;
+        } else if (filter === "ai" && b.kind === "text" && hit(b.text)) return true;
+        else if (filter === "thinking" && b.kind === "thinking" && hit(b.text)) return true;
+      }
+    }
+    return false;
   }
 
   /* ---------- search panel ---------- */
@@ -623,67 +673,76 @@
 
   function renderSearch() {
     const q = searchInput.value;
-    searchResults.innerHTML = "";
-    const results = runSearch(q, activeFilter);
-    searchResultsState = results;
-
-    const mk = (label) => {
+    const mk = (label, sub) => {
+      searchResults.innerHTML = "";
       const div = document.createElement("div");
       div.className = "sr-empty";
-      div.innerHTML = `<div class="big">⌕</div><div>${label}</div>`;
+      div.innerHTML = `<div class="big">⌕</div><div>${escapeHtml(label)}</div>` + (sub ? `<div class="dim">${escapeHtml(sub)}</div>` : "");
       searchResults.appendChild(div);
     };
 
     if (!q.trim()) {
-      mk("输入关键词开始全文搜索\n支持 工具 / AI / 用户 / 思考 过滤");
+      mk("输入关键词开始全文搜索\n支持 工具 / AI / 用户 / 思考 过滤", "");
       resultMeta.textContent = "";
       return;
     }
-    if (!results.length) {
-      mk(`没有匹配 “${escapeHtml(q)}” 的结果`);
-      resultMeta.textContent = "0 条结果";
-      return;
-    }
 
-    const shown = results.slice(0, 60);
-    shown.forEach((r, ri) => {
-      const btn = document.createElement("button");
-      btn.className = "sr-item" + (ri === selIdx ? " sel" : "");
-      btn.dataset.ri = ri;
-      const s = sessions.find((x) => x.id === r.sid);
-      const kindLabel = { tool: "工具调用", ai: "AI 对话", user: "用户对话", thinking: "思考过程" }[r.kind] || "内容";
-      btn.innerHTML =
-        `<div class="sr-title">${escapeHtml(r.title)} <span class="si-tag">${kindLabel}</span></div>` +
-        `<div class="sr-snippet">${highlight(snippet(r.text, q, 220), q)}</div>` +
-        `<div class="sr-meta"><span class="mono">${escapeHtml(s ? sessionTimeLabel(s) : "")}</span>` +
-        `<span>· ${escapeHtml(s ? s.file : "")}</span></div>`;
-      btn.addEventListener("click", () => jumpToResult(ri));
-      searchResults.appendChild(btn);
+    // loading state
+    searchResults.innerHTML = "";
+    const loader = document.createElement("div");
+    loader.className = "sr-empty";
+    loader.innerHTML = `<div class="big" style="font-size:16px">搜索中…</div>`;
+    searchResults.appendChild(loader);
+    resultMeta.textContent = "搜索中…";
+
+    runSearch(q, activeFilter).then((results) => {
+      searchResultsState = results;
+      if (searchInput.value !== q) return; // stale keystroke
+      searchResults.innerHTML = "";
+      if (!results.length) {
+        mk(`没有匹配 “${q}” 的结果`, "试试其他关键词");
+        resultMeta.textContent = "0 条结果";
+        return;
+      }
+      const shown = results.slice(0, 60);
+      shown.forEach((r, ri) => {
+        const btn = document.createElement("button");
+        btn.className = "sr-item" + (ri === selIdx ? " sel" : "");
+        btn.dataset.ri = ri;
+        const s = sessions.find((x) => x.backendFile === r.backendFile);
+        btn.innerHTML =
+          `<div class="sr-title">${escapeHtml(r.title)} <span class="si-tag">${activeFilter === "all" ? "会话" : { tool: "工具调用", ai: "AI 对话", user: "用户对话", thinking: "思考过程" }[activeFilter] || "会话"}</span></div>` +
+          `<div class="sr-meta"><span class="mono">${escapeHtml(s ? sessionTimeLabel(s) : "")}</span>` +
+          `<span>· ${escapeHtml(r.folder || "根目录")}</span></div>`;
+        btn.addEventListener("click", () => jumpToResult(ri));
+        searchResults.appendChild(btn);
+      });
+      resultMeta.textContent = `${results.length} 个会话命中` + (shown.length < results.length ? ` · 显示前 ${shown.length} 条` : "");
     });
-
-    const total = results.length;
-    resultMeta.textContent =
-      `${total} 条结果${shown.length < total ? ` · 显示前 ${shown.length} 条` : ""}` +
-      ` · 范围 ${sessions.length} 个会话`;
   }
 
   function jumpToResult(ri) {
     const r = searchResultsState[ri];
     if (!r) return;
-    selectSession(r.sid);
+    const s = sessions.find((x) => x.backendFile === r.backendFile);
+    if (!s) return;
+    selectSession(s.id);
     const row = timeline.querySelector(`[data-msgid="${r.midx}"]`);
-    if (!row) return;
-    closeSearch();
-    row.scrollIntoView({ block: "center" });
-    let target = row;
-    if (r.bidx >= 0) {
-      const blk = row.querySelector(`[data-bidx="${r.bidx}"]`);
-      if (blk) target = blk;
-      if (blk && blk.classList.contains("tool-block") && blk.querySelector(".tool-input")) {
-        blk.classList.add("open");
+    if (row) {
+      closeSearch();
+      row.scrollIntoView({ block: "center" });
+      let target = row;
+      if (r.bidx >= 0) {
+        const blk = row.querySelector(`[data-bidx="${r.bidx}"]`);
+        if (blk) target = blk;
+        if (blk && blk.classList.contains("tool-block") && blk.querySelector(".tool-input")) {
+          blk.classList.add("open");
+        }
       }
+      flash(target);
+    } else {
+      closeSearch();
     }
-    flash(target);
   }
 
   function flash(el) {
@@ -1003,8 +1062,11 @@
     loadProgressEl.hidden = false;
     let done = 0;
     const total = queue.length;
-    const CHUNK = 6;
-    const step = async () => {
+    // one at a time + a yield between parses keeps the main thread free so
+    // clicks stay responsive while 400+ sessions fill in.
+    const CHUNK = 1;
+    let step = () => {};
+    step = async () => {
       if (token !== preloadToken) return; // superseded
       const slice = queue.slice(done, done + CHUNK);
       if (!slice.length) {
@@ -1013,12 +1075,10 @@
         buildIndex();
         return;
       }
-      await Promise.all(slice.map((s) => loadSession(s, true)));
+      await loadSession(slice[0], true);
       done += slice.length;
       loadProgressEl.textContent = `${done}/${total}`;
-      renderSidebar();
-      // let the browser breathe between chunks
-      setTimeout(step, 20);
+      setTimeout(step, 4);
     };
     step();
   }
@@ -1058,7 +1118,11 @@
             existing.mtime = item.mtime;
             existing.loaded = false;
             changed = true;
-            loadSession(existing, true);
+            const wasSelected = selectedId === existing.id;
+            loadSession(existing, true).then(() => {
+              // if the user is looking at this session, repaint the chat too
+              if (wasSelected) renderChat();
+            });
           }
         }
         if (changed) {
