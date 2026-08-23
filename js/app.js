@@ -111,15 +111,25 @@
     return li;
   }
 
+  const collapsedFolders = new Set();
+
   function groupTitle(label, count) {
     // Claude Code encodes path separators as "--"; make it readable
     const readable = label === "根目录" ? label : label.replace(/--/g, "/");
+    const collapsed = collapsedFolders.has(label);
     const g = document.createElement("div");
-    g.className = "sidebar-group";
+    g.className = "sidebar-group" + (collapsed ? " collapsed" : "");
+    g.title = collapsed ? "展开" : "折叠";
     g.innerHTML =
+      `<span class="garrow">${collapsed ? "▸" : "▾"}</span>` +
       `<span>${escapeHtml(readable)}</span>` +
       `<span class="gcount">${count}</span>` +
       `<span class="gsep"></span>`;
+    g.addEventListener("click", () => {
+      if (collapsedFolders.has(label)) collapsedFolders.delete(label);
+      else collapsedFolders.add(label);
+      renderSidebar();
+    });
     return g;
   }
 
@@ -142,7 +152,9 @@
       });
       for (const f of folders) {
         sessionList.appendChild(groupTitle(f, byFolder.get(f).length));
-        byFolder.get(f).forEach((s) => sessionList.appendChild(sessionItemEl(s)));
+        if (!collapsedFolders.has(f)) {
+          byFolder.get(f).forEach((s) => sessionList.appendChild(sessionItemEl(s)));
+        }
       }
     } else {
       sessions.forEach((s) => sessionList.appendChild(sessionItemEl(s)));

@@ -238,8 +238,18 @@ code, kbd, .mono { font-family: var(--mono); }
   color: var(--text-faint);
   padding: 12px 12px 4px;
   display: flex; align-items: center; gap: 6px;
+  cursor: pointer;
+  user-select: none;
+  transition: color var(--dur);
 }
+.sidebar-group:hover { color: var(--text-dim); }
 .sidebar-group:first-child { padding-top: 6px; }
+.sidebar-group .garrow {
+  font-size: 9px;
+  width: 12px; text-align: center;
+  transition: transform var(--dur) var(--ease-out);
+}
+.sidebar-group.collapsed .garrow { transform: rotate(90deg); }
 .sidebar-group .gcount {
   font-family: var(--mono); font-size: 10px;
   background: var(--bg-elev-2); border: 1px solid var(--line);
