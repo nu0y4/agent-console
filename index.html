@@ -60,12 +60,15 @@
     <div class="sidebar-head">
       <span>会话历史</span>
       <span class="count" id="sessionCount">0</span>
+      <span class="sort-switch" id="sortSwitch" title="切换排列方式">
+        <button class="sort-opt on" data-sort="time">最近</button>
+        <button class="sort-opt" data-sort="folder">文件夹</button>
+      </span>
     </div>
     <ul class="session-list" id="sessionList"></ul>
     <div class="sidebar-empty" id="sidebarEmpty">
       <p>还没有会话</p>
-      <p class="dim">导入 .jsonl 文件<br>或查看内置示例</p>
-      <button class="btn mini" id="sampleBtn">载入示例会话</button>
+      <p class="dim">拖入 .jsonl 文件<br>或点击右上角"导入会话"</p>
     </div>
   </aside>
 
@@ -88,7 +91,6 @@
         <svg viewBox="0 0 16 16" class="ic"><path d="M8 2v8m0 0l-3-3m3 3l3-3"/><path d="M2 12v1.5h12V12"/></svg>
         导入会话文件
       </button>
-      <button class="btn ghost" id="emptySampleBtn">查看内置示例</button>
     </div>
 
     <div class="chat-scroll" id="chatScroll">
@@ -154,7 +156,6 @@
 
 <script src="js/highlighter.js"></script>
 <script src="js/parser.js"></script>
-<script src="js/sample-data.js"></script>
 <script src="js/app.js"></script>
 </body>
 </html>

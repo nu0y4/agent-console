@@ -62,53 +62,88 @@
   }
 
   /* ---------- rendering: sidebar ---------- */
+  let sortMode = "time"; // "time" | "folder"
+
+  function sessionItemEl(s) {
+    const li = document.createElement("li");
+    li.className = "session-item" + (s.id === selectedId ? " active" : "");
+    li.dataset.id = s.id;
+    li.title = s.file;
+
+    const title = document.createElement("div");
+    title.className = "si-title";
+    title.innerHTML = escapeHtml(s.title);
+    const pill = document.createElement("span");
+    pill.className = "pill";
+    pill.textContent = " · " + s.stats.total + " 条";
+    title.appendChild(pill);
+
+    const meta = document.createElement("div");
+    meta.className = "si-meta";
+    meta.innerHTML =
+      `<span class="mono">${escapeHtml(sessionTimeLabel(s))}</span>` +
+      `<span class="dot"></span>` +
+      `<span class="si-tag">${escapeHtml(s.file.replace(/\.jsonl$/i, "").slice(0, 22))}</span>`;
+
+    const counts = document.createElement("div");
+    counts.className = "si-counts";
+    const stat = s.stats;
+    const parts = [];
+    if (stat.user) parts.push(`<span>👤 ${stat.user}</span>`);
+    if (stat.ai) parts.push(`<span>🤖 ${stat.ai}</span>`);
+    if (stat.tool) parts.push(`<span>🔧 ${stat.tool}</span>`);
+    counts.innerHTML = parts.join("");
+
+    const del = document.createElement("button");
+    del.className = "si-del";
+    del.textContent = "✕";
+    del.title = "删除该会话";
+    del.addEventListener("click", (e) => {
+      e.stopPropagation();
+      removeSession(s.id);
+    });
+
+    li.append(title, meta, counts, del);
+    li.addEventListener("click", () => selectSession(s.id));
+    return li;
+  }
+
+  function groupTitle(label, count) {
+    // Claude Code encodes path separators as "--"; make it readable
+    const readable = label === "根目录" ? label : label.replace(/--/g, "/");
+    const g = document.createElement("div");
+    g.className = "sidebar-group";
+    g.innerHTML =
+      `<span>${escapeHtml(readable)}</span>` +
+      `<span class="gcount">${count}</span>` +
+      `<span class="gsep"></span>`;
+    return g;
+  }
+
   function renderSidebar() {
     sessionCount.textContent = sessions.length;
     sidebarEmpty.style.display = sessions.length ? "none" : "";
     sessionList.innerHTML = "";
-    sessions.forEach((s) => {
-      const li = document.createElement("li");
-      li.className = "session-item" + (s.id === selectedId ? " active" : "");
-      li.dataset.id = s.id;
-      li.title = s.file;
 
-      const title = document.createElement("div");
-      title.className = "si-title";
-      title.innerHTML = escapeHtml(s.title);
-      const pill = document.createElement("span");
-      pill.className = "pill";
-      pill.textContent = " · " + s.stats.total + " 条";
-      title.appendChild(pill);
-
-      const meta = document.createElement("div");
-      meta.className = "si-meta";
-      meta.innerHTML =
-        `<span class="mono">${escapeHtml(sessionTimeLabel(s))}</span>` +
-        `<span class="dot"></span>` +
-        `<span class="si-tag">${escapeHtml(s.file.replace(/\.jsonl$/i, "").slice(0, 22))}</span>`;
-
-      const counts = document.createElement("div");
-      counts.className = "si-counts";
-      const stat = s.stats;
-      const parts = [];
-      if (stat.user) parts.push(`<span>👤 ${stat.user}</span>`);
-      if (stat.ai) parts.push(`<span>🤖 ${stat.ai}</span>`);
-      if (stat.tool) parts.push(`<span>🔧 ${stat.tool}</span>`);
-      counts.innerHTML = parts.join("");
-
-      const del = document.createElement("button");
-      del.className = "si-del";
-      del.textContent = "✕";
-      del.title = "删除该会话";
-      del.addEventListener("click", (e) => {
-        e.stopPropagation();
-        removeSession(s.id);
+    if (sortMode === "folder") {
+      const byFolder = new Map();
+      for (const s of sessions) {
+        const key = s.folder || "根目录";
+        if (!byFolder.has(key)) byFolder.set(key, []);
+        byFolder.get(key).push(s);
+      }
+      const folders = Array.from(byFolder.keys()).sort((a, b) => {
+        if (a === "根目录") return 1;
+        if (b === "根目录") return -1;
+        return a.localeCompare(b);
       });
-
-      li.append(title, meta, counts, del);
-      li.addEventListener("click", () => selectSession(s.id));
-      sessionList.appendChild(li);
-    });
+      for (const f of folders) {
+        sessionList.appendChild(groupTitle(f, byFolder.get(f).length));
+        byFolder.get(f).forEach((s) => sessionList.appendChild(sessionItemEl(s)));
+      }
+    } else {
+      sessions.forEach((s) => sessionList.appendChild(sessionItemEl(s)));
+    }
   }
 
   function removeSession(id) {
@@ -182,13 +217,32 @@
     return `<svg viewBox="0 0 16 16">${svg}</svg>`;
   }
 
+  function showLoading(text) {
+    timeline.innerHTML = "";
+    chatTitle.textContent = "正在加载会话…";
+    chatMeta.textContent = "";
+    $("#chatId").hidden = true;
+    $("#cidFile").textContent = "";
+    $("#scrub").hidden = true;
+    chatEmpty.style.display = "flex";
+    chatEmpty.innerHTML =
+      `<div class="empty-ring spin"></div>` +
+      `<h2>${escapeHtml(text || "正在加载中…")}</h2>` +
+      `<p class="dim">扫描会话文件夹并解析…</p>`;
+  }
+
+  // snapshot of the static empty-state markup (restored after a session loads)
+  let chatEmptyHTML = null;
+
   function renderChat() {
     timeline.innerHTML = "";
+    if (chatEmptyHTML === null) chatEmptyHTML = chatEmpty.innerHTML;
     chatEmpty.style.display = "none";
     const s = sessions.find((x) => x.id === selectedId);
     if (!s) {
       chatTitle.textContent = "选择一个会话";
       chatMeta.textContent = "";
+      chatEmpty.innerHTML = chatEmptyHTML;
       chatEmpty.style.display = "flex";
       $("#chatId").hidden = true;
       $("#cidFile").textContent = "";
@@ -467,15 +521,6 @@
     });
   }
 
-  function loadSamples() {
-    SAMPLE_SESSIONS.forEach((sample) => {
-      const text = sample.lines.map((l) => JSON.stringify(l)).join("\n");
-      addSession({ text, file: sample._file });
-    });
-    const first = sessions[0];
-    if (first) selectSession(first.id);
-  }
-
   /* ---------- search index ---------- */
   function buildIndex() {
     index = [];
@@ -679,8 +724,15 @@
   });
   $("#loadBtn").addEventListener("click", () => fileInput.click());
   $("#emptyLoadBtn").addEventListener("click", () => fileInput.click());
-  $("#emptySampleBtn").addEventListener("click", loadSamples);
-  $("#sampleBtn").addEventListener("click", loadSamples);
+
+  // sort mode toggle
+  document.querySelectorAll(".sort-opt").forEach((b) => {
+    b.addEventListener("click", () => {
+      sortMode = b.dataset.sort;
+      document.querySelectorAll(".sort-opt").forEach((x) => x.classList.toggle("on", x.dataset.sort === sortMode));
+      renderSidebar();
+    });
+  });
 
   searchInput.addEventListener("input", () => { selIdx = -1; renderSearch(); });
 
@@ -739,6 +791,7 @@
 
   // load every session listed by the backend, preserving order
   async function loadAllFromBackend() {
+    showLoading("正在加载会话…");
     let res;
     try {
       res = await fetch("/api/sessions");
@@ -756,7 +809,7 @@
         const raw = await fetch(`/api/sessions/raw?file=${encodeURIComponent(item.file)}`).then((r) => r.text());
         const s = parse(raw, item.name);
         if (s.messages.length) {
-          const rec = Object.assign({ id: "s" + (++seq), file: item.name }, s);
+          const rec = Object.assign({ id: "s" + (++seq), file: item.name, folder: item.folder || "" }, s);
           rec.origin = "backend";
           sessions.unshift(rec);
         }
@@ -829,11 +882,10 @@
   renderChat();
   (async () => {
     const ok = await backendAvailable();
-    if (ok) {
-      const count = await loadAllFromBackend();
-      if (!count) loadSamples(); // dir empty → show samples
-    } else {
-      loadSamples(); // no backend → standalone demo mode
+    if (!ok) {
+      showLoading("后端不可达，可手动导入 .jsonl 会话文件");
+      return;
     }
+    await loadAllFromBackend();
   })();
 })();

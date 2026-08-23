@@ -206,7 +206,7 @@ code, kbd, .mono { font-family: var(--mono); }
   min-height: 0;
 }
 .sidebar-head {
-  display: flex; align-items: center; justify-content: space-between;
+  display: flex; align-items: center; gap: 8px;
   padding: 14px 16px 8px;
   font-size: 11px; letter-spacing: 0.1em; text-transform: uppercase;
   color: var(--text-faint); font-weight: 600;
@@ -216,6 +216,36 @@ code, kbd, .mono { font-family: var(--mono); }
   background: var(--bg-elev-2); border: 1px solid var(--line);
   padding: 0 7px; border-radius: 99px; color: var(--text-dim);
 }
+.sort-switch {
+  margin-left: auto;
+  display: inline-flex; align-items: center;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  overflow: hidden;
+}
+.sort-opt {
+  height: 20px; padding: 0 8px;
+  border: none; background: transparent;
+  font: 600 10px var(--sans); letter-spacing: 0.04em;
+  color: var(--text-faint); cursor: pointer;
+  transition: background var(--dur), color var(--dur);
+}
+.sort-opt:hover { color: var(--text); }
+.sort-opt.on { background: var(--teal); color: #fff; }
+
+.sidebar-group {
+  font-size: 10px; letter-spacing: 0.08em; text-transform: uppercase;
+  color: var(--text-faint);
+  padding: 12px 12px 4px;
+  display: flex; align-items: center; gap: 6px;
+}
+.sidebar-group:first-child { padding-top: 6px; }
+.sidebar-group .gcount {
+  font-family: var(--mono); font-size: 10px;
+  background: var(--bg-elev-2); border: 1px solid var(--line);
+  border-radius: 99px; padding: 0 6px;
+}
+.sidebar-group .gsep { flex: 1; height: 1px; background: var(--line-soft); }
 .session-list { list-style: none; overflow-y: auto; flex: 1; padding: 4px 8px 12px; }
 .session-item {
   display: flex; flex-direction: column; gap: 3px;

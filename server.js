@@ -79,7 +79,13 @@ function scanSessions(dir) {
         try { mtime = fs.statSync(p).mtimeMs; } catch (e) {}
         // Claude Code names the file by session UUID (dir name may be a prefix folder)
         const sessionId = ent.name.replace(/\.(jsonl|ndjson)$/i, "");
-        out.push({ sessionId, file: p, name: ent.name, mtime });
+        const rel = path.relative(dir, d);
+        // group by the top-level folder under the config dir
+        let folder = "";
+        if (rel && rel !== ".") {
+          folder = rel.split(path.sep)[0];
+        }
+        out.push({ sessionId, file: p, name: ent.name, mtime, folder });
       }
     }
   };
