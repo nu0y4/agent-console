@@ -192,19 +192,28 @@ code, kbd, .mono { font-family: var(--mono); }
    ============================================================ */
 .layout {
   display: grid;
-  grid-template-columns: 280px 1fr;
+  grid-template-columns: var(--sidebar-width, 280px) 4px 1fr;
   height: calc(100vh - 54px);
 }
-
-/* ============================================================
-   Sidebar — session list
-   ============================================================ */
 .sidebar {
+  grid-column: 1;
   background: var(--bg-elev-1);
-  border-right: 1px solid var(--line-soft);
   display: flex; flex-direction: column;
   min-height: 0;
+  min-width: 0;
+  overflow: hidden;
 }
+.sidebar.collapsed { display: none; }
+.resizer {
+  grid-column: 2;
+  width: 4px;
+  cursor: col-resize;
+  background: var(--bg-elev-1);
+  border-right: 1px solid var(--line-soft);
+  transition: background var(--dur);
+}
+.resizer:hover, .resizer.dragging { background: var(--teal-line); }
+.chat { grid-column: 3; }
 .sidebar-head {
   display: flex; align-items: center; gap: 8px;
   padding: 14px 16px 8px;

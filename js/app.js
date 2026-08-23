@@ -701,6 +701,71 @@
     setTimeout(() => { el.style.outline = ""; el.style.outlineOffset = ""; }, 1400);
   }
 
+  /* ---------- sidebar resize & collapse ---------- */
+  const resizer = $("#resizer");
+  const sidebarEl = $("#sidebar");
+  const SB_KEY = "agent-console.sidebar";
+
+  function applySidebarState() {
+    const st = JSON.parse(localStorage.getItem(SB_KEY) || "null") || {};
+    const width = st.collapsed ? 0 : Math.max(180, Math.min(520, st.width || 280));
+    document.documentElement.style.setProperty("--sidebar-width", width + "px");
+    sidebarEl.classList.toggle("collapsed", !!st.collapsed);
+    resizer.title = st.collapsed ? "展开侧边栏" : "拖动调整宽度 · 双击折叠";
+  }
+  function saveSidebarState(partial) {
+    const st = JSON.parse(localStorage.getItem(SB_KEY) || "null") || {};
+    localStorage.setItem(SB_KEY, JSON.stringify(Object.assign(st, partial)));
+  }
+
+  let resizing = false;
+  let resizedMoved = false;
+  resizer.addEventListener("pointerdown", (e) => {
+    if (e.button !== 0) return;
+    resizing = true;
+    resizedMoved = false;
+    resizer.classList.add("dragging");
+    resizer.setPointerCapture(e.pointerId);
+  });
+  resizer.addEventListener("pointermove", (e) => {
+    if (!resizing) return;
+    const w = e.clientX - sidebarEl.getBoundingClientRect().left;
+    const clamped = Math.max(180, Math.min(520, w));
+    document.documentElement.style.setProperty("--sidebar-width", clamped + "px");
+    resizedMoved = true;
+  });
+  const endResize = () => {
+    if (!resizing) return;
+    resizing = false;
+    resizer.classList.remove("dragging");
+    if (!resizedMoved) return; // it was a click, not a drag — let click handler act
+    const w = parseInt(document.documentElement.style.getPropertyValue("--sidebar-width")) || 280;
+    saveSidebarState({ width: w, collapsed: false });
+    applySidebarState();
+  };
+  resizer.addEventListener("pointerup", endResize);
+  resizer.addEventListener("pointercancel", endResize);
+
+  let suppressClickUntil = 0;
+  resizer.addEventListener("dblclick", () => {
+    suppressClickUntil = Date.now() + 350;
+    const st = JSON.parse(localStorage.getItem(SB_KEY) || "null") || {};
+    const collapsed = !st.collapsed;
+    saveSidebarState({ collapsed });
+    applySidebarState();
+  });
+  // click on collapsed resizer expands (suppressed right after a dblclick)
+  resizer.addEventListener("click", () => {
+    if (Date.now() < suppressClickUntil) return;
+    const st = JSON.parse(localStorage.getItem(SB_KEY) || "null") || {};
+    if (st.collapsed) {
+      saveSidebarState({ collapsed: false });
+      applySidebarState();
+    }
+  });
+
+  applySidebarState();
+
   /* ---------- events ---------- */
   // drag & drop .jsonl files anywhere → load like 导入会话
   const dropOverlay = $("#dropOverlay");
