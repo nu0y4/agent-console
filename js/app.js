@@ -302,7 +302,7 @@
     const cidCmd = $("#cidCmd");
     if (s.sessionId) {
       chatId.hidden = false;
-      cidFile.textContent = s.file || "";
+      cidFile.textContent = (s.file || "").replace(/\.jsonl$/i, "");
       cidFile.title = s.file || "";
       cidCmd.textContent = `claude --resume ${s.sessionId}`;
       cidCmd.title = `claude --resume ${s.sessionId}`;
@@ -837,7 +837,7 @@
     const lines = [];
     lines.push(`===== 会话：${s.title} =====`);
     if (s.sessionId) lines.push(`sessionId: ${s.sessionId}`);
-    lines.push(`文件：${s.file || ""}`);
+    lines.push(`文件：${(s.file || "").replace(/\.jsonl$/i, "")}`);
     lines.push("");
 
     for (const m of s.messages) {
