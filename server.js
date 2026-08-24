@@ -144,10 +144,27 @@ const server = http.createServer(async (req, res) => {
     }
 
     /* --- sessions list --- */
-    if (p === "/api/sessions") {
+    if (p === "/api/sessions" && req.method === "GET") {
       const cfg = readConfig();
       const sessions = scanSessions(cfg.sessionDir);
       return sendJson(res, 200, { sessionDir: cfg.sessionDir, count: sessions.length, sessions });
+    }
+
+    /* --- delete a session file --- */
+    if (p === "/api/sessions" && req.method === "DELETE") {
+      const file = url.searchParams.get("file");
+      if (!file) return sendJson(res, 400, { error: "missing file" });
+      const cfg = readConfig();
+      const dir = path.normalize(cfg.sessionDir);
+      const target = path.normalize(file);
+      if (target !== dir && !target.startsWith(dir + path.sep)) return sendJson(res, 403, { error: "outside dir" });
+      if (!/\.(jsonl|ndjson)$/i.test(target)) return sendJson(res, 403, { error: "not a session file" });
+      try {
+        fs.unlinkSync(target);
+        return sendJson(res, 200, { ok: true, file });
+      } catch (e) {
+        return sendJson(res, 404, { error: "not found" });
+      }
     }
 
     /* --- raw file --- */

@@ -29,7 +29,7 @@
   const searchResults = $("#searchResults");
   const resultMeta = $("#resultMeta");
   const fileInput = $("#fileInput");
-  const clearBtn = $("#clearBtn");
+  const delBtn = $("#delBtn");
 
   let activeFilter = "all";
   let searchResultsState = [];
@@ -922,11 +922,19 @@
     if (searchPanel.hidden) return;
     if (!searchWrap.contains(e.target)) closeSearch();
   });
-  clearBtn.addEventListener("click", () => {
-    if (!sessions.length) return;
-    if (!confirm("清空所有已加载的会话？")) return;
-    sessions = [];
-    selectedId = null;
+  // delete the current session's file (no confirm)
+  delBtn.addEventListener("click", async () => {
+    const s = sessions.find((x) => x.id === selectedId);
+    if (!s || !s.backendFile) return;
+    const prev = sessions[sessions.indexOf(s) - 1] || sessions[sessions.indexOf(s) + 1] || null;
+    try {
+      const res = await fetch(`/api/sessions?file=${encodeURIComponent(s.backendFile)}`, { method: "DELETE" });
+      if (!res.ok) { alert("删除失败"); return; }
+    } catch (e) { alert("后端不可达"); return; }
+    // drop from cache + list
+    try { await SessionCache.put(s.backendFile, null); } catch (e) {}
+    sessions = sessions.filter((x) => x.id !== s.id);
+    selectedId = prev ? prev.id : null;
     renderSidebar();
     renderChat();
   });
