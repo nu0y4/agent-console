@@ -300,11 +300,13 @@ code, kbd, .mono { font-family: var(--mono); }
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 .si-title .pill { font-weight: 500; }
-.si-meta { display: flex; align-items: center; gap: 8px; font-size: 11px; color: var(--text-faint); }
+.si-meta { display: flex; align-items: baseline; gap: 8px; font-size: 11px; color: var(--text-faint); flex-wrap: wrap; }
 .si-meta .mono { font-size: 10px; }
 .si-tag {
   font-size: 10px; letter-spacing: 0.04em; color: var(--teal-deep);
   font-weight: 600;
+  word-break: break-all;
+  user-select: text;
 }
 .si-meta .dot { width: 3px; height: 3px; border-radius: 50%; background: var(--text-faint); }
 .si-counts { display: flex; gap: 8px; font-size: 11px; color: var(--text-dim); font-family: var(--mono); }

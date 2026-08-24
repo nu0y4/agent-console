@@ -83,10 +83,11 @@
 
     const meta = document.createElement("div");
     meta.className = "si-meta";
+    const idFull = (s.file || "").replace(/\.jsonl$/i, "");
     meta.innerHTML =
       `<span class="mono">${escapeHtml(sessionTimeLabel(s))}</span>` +
       `<span class="dot"></span>` +
-      `<span class="si-tag">${escapeHtml((s.file || "").replace(/\.jsonl$/i, "").slice(0, 22))}</span>`;
+      `<span class="si-tag" title="${escapeHtml(idFull)}">${escapeHtml(idFull)}</span>`;
 
     const counts = document.createElement("div");
     counts.className = "si-counts";
