@@ -357,8 +357,7 @@ code, kbd, .mono { font-family: var(--mono); }
 }
 .cid-cmd {
   font-family: var(--mono); font-size: 11px; color: var(--text-faint);
-  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-  max-width: 300px;
+  white-space: nowrap;
 }
 .chat-scroll { flex: 1; overflow-y: auto; min-height: 0; }
 .timeline {
