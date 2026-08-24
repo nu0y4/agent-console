@@ -95,6 +95,8 @@ function scanSessions(dir) {
     for (const ent of entries) {
       const p = path.join(d, ent.name);
       if (ent.isDirectory()) {
+        // skip subagent transcripts; they belong to a parent session
+        if (ent.name === "subagents") continue;
         if (depth < 6) walk(p, depth + 1); // bounded recursion
       } else if (ent.isFile() && /\.(jsonl|ndjson)$/i.test(ent.name)) {
         let mtime = 0;
