@@ -469,6 +469,7 @@
 
     // keep the strip 1.6× the track when the window resizes
     const onResize = () => {
+      if (!document.body.contains(content)) return; // torn down
       const w = Math.round(track.clientWidth * 1.6);
       content.style.width = w + "px";
       const factor = w / contentWidth;
@@ -541,6 +542,8 @@
       if (inertiaTimer) cancelAnimationFrame(inertiaTimer);
       let vel = v;
       const step = () => {
+        // stop if this scrub was torn down (session switched)
+        if (!document.body.contains(content)) { inertiaTimer = null; return; }
         vel *= 0.92; // decay
         if (Math.abs(vel) < 0.00001) { inertiaTimer = null; return; }
         const cur = progressOf();
