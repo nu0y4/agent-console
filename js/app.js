@@ -542,20 +542,27 @@
       if (!dragStarted) return; // was a click, not a drag — don't scrub
       if (!(e && typeof e.clientX === "number")) return;
       const p = posFromEvent(e.clientX);
-      scrubToP(p, true);
-      // flick: velocity in px/ms over the last sample
+      // flick velocity drives a smooth glide first
       const dt = Math.max(performance.now() - lastPTime, 1);
       const v = (p - lastPX) / dt; // progress per ms
-      if (Math.abs(v) > 0.0004) startInertia(v);
+      if (Math.abs(v) > 0.0004) {
+        startInertia(v, true);
+      } else {
+        scrubToP(p, true); // slow release: snap, magnetized
+      }
     };
-    function startInertia(v) {
+    function startInertia(v, magnetAtEnd) {
       if (inertiaTimer) cancelAnimationFrame(inertiaTimer);
       let vel = v;
       const step = () => {
-        // stop if this scrub was torn down (session switched)
         if (!document.body.contains(content)) { inertiaTimer = null; return; }
         vel *= 0.92; // decay
-        if (Math.abs(vel) < 0.00001) { inertiaTimer = null; return; }
+        if (Math.abs(vel) < 0.00001) {
+          inertiaTimer = null;
+          // glide ended → settle smoothly onto the nearest node
+          if (magnetAtEnd) animateTo(magnetSnap(progressOf()));
+          return;
+        }
         const cur = progressOf();
         const np = Math.max(0, Math.min(1, cur + vel * 16));
         applyPos(np);
@@ -564,6 +571,25 @@
         inertiaTimer = requestAnimationFrame(step);
       };
       inertiaTimer = requestAnimationFrame(step);
+    }
+    // smooth tween from current position to target progress (no jump)
+    function animateTo(target) {
+      const from = progressOf();
+      const diff = target - from;
+      if (Math.abs(diff) < 0.001) return;
+      const dur = 120;
+      const t0 = performance.now();
+      const ease = (t) => 1 - Math.pow(1 - t, 3); // ease-out cubic
+      const raf = (now) => {
+        if (!document.body.contains(content)) return;
+        const t = Math.min((now - t0) / dur, 1);
+        const np = from + diff * ease(t);
+        applyPos(np);
+        const max = chatScroll.scrollHeight - chatScroll.clientHeight;
+        chatScroll.scrollTop = max * np;
+        if (t < 1) requestAnimationFrame(raf);
+      };
+      requestAnimationFrame(raf);
     }
     function progressOf() {
       const max = chatScroll.scrollHeight - chatScroll.clientHeight;
