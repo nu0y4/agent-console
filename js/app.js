@@ -387,10 +387,10 @@
     startEl.textContent = tStart ? fmtFull(tStart) : "会话开始";
     endEl.textContent = tEnd ? fmtFull(tEnd) : "会话结束";
 
-    // pick a "nice" time step so ticks land on round times
+    // pick a step so ticks are dense (20-40 across the strip)
     function niceStep(ms) {
-      const steps = [1000, 2000, 5000, 10000, 15000, 30000, 60000, 120000, 300000, 600000, 1800000, 3600000, 7200000, 21600000, 43200000];
-      for (const st of steps) if (ms / st <= 12) return st;
+      const steps = [1000, 2000, 5000, 10000, 15000, 30000, 60000, 120000, 300000, 600000, 900000, 1800000, 3600000, 7200000, 10800000, 21600000, 43200000, 86400000];
+      for (const st of steps) if (ms / st <= 40) return st;
       return steps[steps.length - 1];
     }
     const stepMs = duration > 0 ? niceStep(duration) : 30000;
@@ -421,12 +421,17 @@
         dotsWrap.appendChild(tick);
         tickEls.push(tick);
         // time label under major ticks (every other)
-        if (guard % 2 === 0) {
+        // label only on whole hours (or every tick if step >= 1h)
+        const isHour = cur % 3600000 === 0;
+        if (isHour || stepMs >= 3600000) {
           const lab = document.createElement("span");
           lab.className = "scrub-timelabel";
           lab.style.left = `${x}px`;
           lab.dataset.x = String(x);
-          lab.textContent = fmtClock(new Date(cur).toISOString());
+          const d = new Date(cur);
+          const hh = String(d.getHours()).padStart(2, "0");
+          const mm = String(d.getMinutes()).padStart(2, "0");
+          lab.textContent = mm === "00" ? `${hh}:00` : `${hh}:${mm}`;
           dotsWrap.appendChild(lab);
         }
         cur += stepMs;

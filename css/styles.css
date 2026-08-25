@@ -404,7 +404,7 @@ code, kbd, .mono { font-family: var(--mono); }
   position: absolute; top: 50%;
   width: 1px; height: 10px;
   transform: translate(-50%, -50%);
-  background: var(--scrub-line);
+  background: var(--text-faint);
   border-radius: 1px;
   box-sizing: border-box;
 }
