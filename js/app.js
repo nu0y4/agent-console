@@ -412,38 +412,42 @@
       return p;
     };
 
-    // tick dots — the timeline strip (wide) the marker slides over.
-    // The strip is ALWAYS track-width × 1.6 regardless of node count or window
-    // width, so there is guaranteed scroll travel (maxShift > 0) in every case.
+    // tick marks — fixed 24px pitch, capped, so a 1500-node session doesn't
+    // render a solid wall of vertical lines. The marker still maps to any
+    // progress via magnet anchors; the ticks are just visual guides.
     const dotsWrap = $("#scrubDots");
     dotsWrap.innerHTML = "";
     const dotEls = [];
     const trackW = track.clientWidth || 600;
     const contentWidth = Math.round(trackW * 1.6);
     content.style.width = contentWidth + "px";
-    // spread the N nodes evenly across the full strip
-    const DOT_SPACING = N > 1 ? contentWidth / (N - 1) : 0;
-    if (N > 1) {
-      for (let i = 0; i < N; i++) {
-        const x = i * DOT_SPACING;
-        const dot = document.createElement("div");
-        dot.className = "scrub-dot";
-        dot.style.left = `${x}px`;
-        if (i % 5 === 0 && msgTimes[magnetIdx[i]]) {
-          const lab = document.createElement("span");
-          lab.className = "scrub-timelabel";
-          lab.style.left = `${x}px`;
-          lab.dataset.x = String(x);
-          lab.textContent = fmtClock(msgTimes[magnetIdx[i]]);
-          dotsWrap.appendChild(lab);
-        }
-        dotsWrap.appendChild(dot);
-        dotEls.push(dot);
-      }
+    const TICK = 24; // px between ticks
+    const tickCount = Math.min(Math.floor(contentWidth / TICK), 200);
+    for (let k = 0; k <= tickCount; k++) {
+      const dot = document.createElement("div");
+      dot.className = "scrub-dot";
+      dot.style.left = `${k * TICK}px`;
+      dotsWrap.appendChild(dot);
+      dotEls.push(dot);
+    }
+    // time labels at a readable cadence (every 8th tick)
+    const LABEL_EVERY = 8;
+    for (let k = 0; k <= tickCount; k += LABEL_EVERY) {
+      // map tick position back to a node index for a timestamp
+      const frac = (k * TICK) / contentWidth;
+      const idx = Math.round(frac * (N - 1));
+      const t = msgTimes[magnetIdx[idx]];
+      if (!t) continue;
+      const lab = document.createElement("span");
+      lab.className = "scrub-timelabel";
+      lab.style.left = `${k * TICK}px`;
+      lab.dataset.x = String(k * TICK);
+      lab.textContent = fmtClock(t);
+      dotsWrap.appendChild(lab);
     }
     const setActiveDot = (p) => {
       if (!dotEls.length) return;
-      const i = Math.min(N - 1, Math.max(0, Math.round(p * (N - 1))));
+      const i = Math.min(dotEls.length - 1, Math.max(0, Math.round(p * (dotEls.length - 1))));
       dotEls.forEach((d, di) => d.classList.toggle("active", di === i));
     };
 
@@ -468,7 +472,7 @@
       const w = Math.round(track.clientWidth * 1.6);
       content.style.width = w + "px";
       const factor = w / contentWidth;
-      dotEls.forEach((d, i) => { d.style.left = `${i * DOT_SPACING * factor}px`; });
+      dotEls.forEach((d, i) => { d.style.left = `${i * TICK * factor}px`; });
       document.querySelectorAll(".scrub-timelabel").forEach((el) => {
         el.style.left = `${(parseFloat(el.dataset.x) || 0) * factor}px`;
       });
