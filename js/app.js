@@ -752,22 +752,21 @@
     const s = sessions.find((x) => x.backendFile === r.backendFile);
     if (!s) return;
     selectSession(s.id);
+    closeSearch();
+    // rg-backed results are file-level — no exact message index to jump to
+    if (r.midx == null) return;
     const row = timeline.querySelector(`[data-msgid="${r.midx}"]`);
-    if (row) {
-      closeSearch();
-      row.scrollIntoView({ block: "center" });
-      let target = row;
-      if (r.bidx >= 0) {
-        const blk = row.querySelector(`[data-bidx="${r.bidx}"]`);
-        if (blk) target = blk;
-        if (blk && blk.classList.contains("tool-block") && blk.querySelector(".tool-input")) {
-          blk.classList.add("open");
-        }
+    if (!row) return;
+    row.scrollIntoView({ block: "center" });
+    let target = row;
+    if (r.bidx >= 0) {
+      const blk = row.querySelector(`[data-bidx="${r.bidx}"]`);
+      if (blk) target = blk;
+      if (blk && blk.classList.contains("tool-block") && blk.querySelector(".tool-input")) {
+        blk.classList.add("open");
       }
-      flash(target);
-    } else {
-      closeSearch();
     }
+    flash(target);
   }
 
   function flash(el) {
