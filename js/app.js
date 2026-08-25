@@ -286,7 +286,7 @@
   // snapshot of the static empty-state markup (restored after a session loads)
   let chatEmptyHTML = null;
 
-  function renderChat() {
+  function renderChat(targetMsgId) {
     timeline.innerHTML = "";
     if (chatEmptyHTML === null) chatEmptyHTML = chatEmpty.innerHTML;
     chatEmpty.style.display = "none";
@@ -352,6 +352,15 @@
       row.className = "msg" + (m.kind === "user" ? " msg--user" : m.kind === "assistant" ? " msg--assistant" : "");
       row.dataset.msgid = mi;
       row.dataset.types = types.join(",");
+      // 筛选模式下点击消息 → 回到全部视图并定位到该消息
+      if (filter !== "all") {
+        row.style.cursor = "pointer";
+        row.addEventListener("click", () => {
+          msgFilterType = "all";
+          syncMsgFilterChips();
+          renderChat(mi);
+        });
+      }
 
       const head = document.createElement("div");
       head.className = "msg-head";
@@ -394,8 +403,19 @@
       frag.appendChild(row);
     });
     timeline.appendChild(frag);
-    chatScroll.scrollTop = 0;
     initScrub(s);
+    // 定位到指定消息（从筛选模式点击回来）
+    if (targetMsgId != null) {
+      const target = timeline.querySelector(`[data-msgid="${targetMsgId}"]`);
+      if (target) {
+        chatScroll.scrollTop = target.offsetTop - 60;
+        flash(target);
+      } else {
+        chatScroll.scrollTop = 0;
+      }
+    } else {
+      chatScroll.scrollTop = 0;
+    }
   }
 
   /* ---------- timeline scrubber ---------- */
