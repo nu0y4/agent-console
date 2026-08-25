@@ -367,30 +367,38 @@ code, kbd, .mono { font-family: var(--mono); }
 }
 
 /* ============================================================
-   Timeline scrubber (bottom of chat)
+   Timeline scrubber — fixed center marker, scrolling timeline
    ============================================================ */
 .scrub {
-  padding: 10px 26px 12px;
+  padding: 8px 26px 10px;
   border-top: 1px solid var(--line-soft);
   background: var(--bg-elev-1);
   user-select: none;
 }
+.scrub-top {
+  display: flex; align-items: baseline; gap: 10px;
+  margin-bottom: 6px;
+}
+.scrub-tick { flex: none; }
+.scrub-range { color: var(--teal-deep); font-weight: 600; font-family: var(--mono); font-size: 12px; }
 .scrub-track {
   position: relative;
-  height: 20px;
+  height: 26px;
+  overflow: hidden;
   cursor: grab;
 }
 .scrub-track:active { cursor: grabbing; }
-.scrub-line {
-  position: absolute; top: 9.5px; left: 0; right: 0; height: 1px;
-  background: var(--scrub-line);
-  border-radius: 1px;
+/* the timeline strip translates underneath a fixed center marker */
+.scrub-content {
+  position: absolute; top: 0; bottom: 0;
+  left: 50%;
+  will-change: transform;
+  background: linear-gradient(var(--scrub-line), var(--scrub-line)) center / 100% 1px no-repeat;
 }
-.scrub-fill {
-  position: absolute; top: 9.5px; left: 0; height: 1px;
-  background: var(--teal);
-  border-radius: 1px;
-  width: 0%;
+.scrub-line {
+  position: absolute; top: 50%; left: 0; right: 0; height: 1px;
+  background: var(--scrub-line);
+  transform: translateY(-50%);
 }
 .scrub-dots {
   position: absolute; inset: 0;
@@ -405,22 +413,29 @@ code, kbd, .mono { font-family: var(--mono); }
   box-sizing: border-box;
 }
 .scrub-dot.active { background: var(--teal); box-shadow: 0 0 0 1px var(--teal-soft); }
-.scrub-thumb {
-  position: absolute; top: 50%;
-  width: 14px; height: 14px; border-radius: 50%;
+/* fixed center marker + time label above it */
+.scrub-marker {
+  position: absolute; top: 0; bottom: 0; left: 50%;
+  width: 2px;
+  transform: translateX(-50%);
+  background: var(--teal);
+  border-radius: 1px;
+  pointer-events: none;
+}
+.scrub-marker::after {
+  content: ""; position: absolute; top: 50%; left: 50%;
+  width: 10px; height: 10px; border-radius: 50%;
+  transform: translate(-50%, -50%);
   background: var(--teal);
   border: 2px solid var(--bg-elev-1);
-  box-shadow: 0 1px 4px oklch(0.2 0.05 220 / 0.35);
-  transform: translate(-50%, -50%);
-  left: 0%;
-  transition: transform 80ms var(--ease-out);
+  box-shadow: 0 1px 3px oklch(0.2 0.05 220 / 0.4);
 }
-.scrub-thumb.snap { transform: translate(-50%, -50%) scale(1.55); }
 .scrub-bubble {
   position: absolute;
-  bottom: calc(100% + 8px);
+  bottom: 100%;
   left: 50%;
   transform: translateX(-50%);
+  margin-bottom: 4px;
   padding: 3px 8px;
   background: var(--bg-elev-3);
   border: 1px solid var(--line);
@@ -433,14 +448,20 @@ code, kbd, .mono { font-family: var(--mono); }
   pointer-events: none;
 }
 .scrub.dragging .scrub-bubble { opacity: 1; }
+/* edge fade so the ends look like a real timeline viewport */
+.scrub-track::before, .scrub-track::after {
+  content: ""; position: absolute; top: 0; bottom: 0; width: 40px;
+  pointer-events: none; z-index: 2;
+}
+.scrub-track::before { left: 0; background: linear-gradient(to right, var(--bg-elev-1), transparent); }
+.scrub-track::after { right: 0; background: linear-gradient(to left, var(--bg-elev-1), transparent); }
 .scrub-labels {
   display: flex; justify-content: space-between; align-items: center;
-  gap: 10px; margin-top: 2px;
+  gap: 10px; margin-top: 4px;
   font-family: var(--mono); font-size: 10.5px; color: var(--text-faint);
 }
 .scrub-start { text-align: left; }
 .scrub-end { text-align: right; }
-.scrub-range { color: var(--teal-deep); font-weight: 600; text-align: center; }
 
 /* ============================================================
    Settings modal

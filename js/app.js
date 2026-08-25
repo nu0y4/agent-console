@@ -368,9 +368,9 @@
   function initScrub(s) {
     const scrub = $("#scrub");
     const track = $("#scrubTrack");
-    const fill = $("#scrubFill");
-    const thumb = $("#scrubThumb");
+    const content = $("#scrubContent");
     const bubble = $("#scrubBubble");
+    const tickEl = $("#scrubTick");
     const startEl = $("#scrubStart");
     const endEl = $("#scrubEnd");
     const rangeEl = $("#scrubRange");
@@ -387,38 +387,40 @@
       ? (s.messages[s.messages.length - 1].timestamp ? fmt(s.messages[s.messages.length - 1].timestamp) : "会话结束")
       : "—";
 
-    // per-message timestamps for scrub-time label
+    // per-message timestamps
     const msgTimes = s.messages.map((m) => m.timestamp);
     const setRange = (p) => {
-      // nearest message index by progress → show its timestamp
       const idx = Math.min(msgTimes.length - 1, Math.max(0, Math.round(p * (msgTimes.length - 1))));
       const t = msgTimes[idx];
       rangeEl.textContent = t ? fmt(t) : (ts ? fmt(ts) : "");
+      tickEl.textContent = t ? fmtClock(t) : "";
     };
 
-    // magnet anchors: evenly spaced message indexes (the ones with a timestamp)
+    // magnet anchors
     const magnetIdx = [];
     msgTimes.forEach((t, i) => { if (t) magnetIdx.push(i); });
     const N = magnetIdx.length;
-    const MAGNET_RATIO = 0.34; // snap within 34% of the node spacing
+    const MAGNET_RATIO = 0.34;
     const magnetSnap = (p) => {
       if (N < 2) return p;
-      const x = p * (N - 1);           // continuous node-space position
-      const nearest = Math.round(x);   // nearest node
+      const x = p * (N - 1);
+      const nearest = Math.round(x);
       const dist = x - nearest;
-      if (Math.abs(dist) <= MAGNET_RATIO) return nearest / (N - 1); // magnetized
-      return p;                         // free
+      if (Math.abs(dist) <= MAGNET_RATIO) return nearest / (N - 1);
+      return p;
     };
 
-    // tick dots on the track, one per timestamped message
+    // tick dots — the timeline strip (wide) the marker slides over
     const dotsWrap = $("#scrubDots");
     dotsWrap.innerHTML = "";
     const dotEls = [];
+    const DOT_SPACING = 26; // px between dots
+    const contentWidth = N > 1 ? (N - 1) * DOT_SPACING : 0;
     if (N > 1) {
       for (let i = 0; i < N; i++) {
         const dot = document.createElement("div");
         dot.className = "scrub-dot";
-        dot.style.left = `${(i / (N - 1)) * 100}%`;
+        dot.style.left = `${i * DOT_SPACING}px`;
         dotsWrap.appendChild(dot);
         dotEls.push(dot);
       }
@@ -435,17 +437,12 @@
 
     const setBubble = (label) => { bubble.textContent = label; };
 
-    function fromScroll() {
-      const max = chatScroll.scrollHeight - chatScroll.clientHeight;
-      const p = max > 0 ? chatScroll.scrollTop / max : 0;
-      applyPos(p, false);
-    }
-
-    function applyPos(p, magnet) {
+    // move the timeline strip so the marker (center) lands on progress p
+    function applyPos(p) {
       p = Math.max(0, Math.min(1, p));
-      if (magnet !== false) p = magnetSnap(p);
-      fill.style.width = `${p * 100}%`;
-      thumb.style.left = `${p * 100}%`;
+      const trackW = track.clientWidth;
+      const maxShift = Math.max(0, contentWidth - trackW);
+      content.style.transform = `translateX(${(p * -maxShift).toFixed(1)}px)`;
       setRange(p);
       setActiveDot(p);
     }
@@ -458,12 +455,10 @@
         snapped = snappedP !== p;
         p = snappedP;
       }
-      if (snapped) pulseThumb();
-      applyPos(p, false);
+      applyPos(p);
       // scroll the chat to the same progress
       const max = chatScroll.scrollHeight - chatScroll.clientHeight;
       chatScroll.scrollTop = max * p;
-      // show the message index under the cursor
       const idx = Math.min(total - 1, Math.max(0, Math.round(p * (total - 1))));
       const row = rows[idx];
       if (row) {
@@ -472,15 +467,9 @@
       }
     }
 
-    // thumb drag
-    function pulseThumb() {
-      thumb.classList.remove("snap");
-      void thumb.offsetWidth; // restart animation
-      thumb.classList.add("snap");
-      setTimeout(() => thumb.classList.remove("snap"), 90);
-    }
     function posFromEvent(clientX) {
       const r = track.getBoundingClientRect();
+      // drag horizontally: timeline follows so marker maps to position
       return (clientX - r.left) / r.width;
     }
     track.addEventListener("pointerdown", (e) => {
@@ -495,7 +484,6 @@
     const endDrag = (e) => {
       dragging = false;
       scrub.classList.remove("dragging");
-      // magnetize only on release
       if (e && typeof e.clientX === "number") scrubToP(posFromEvent(e.clientX), true);
     };
     track.addEventListener("pointerup", endDrag);
@@ -506,11 +494,16 @@
       if (e.pointerType === "mouse") scrubToP(posFromEvent(e.clientX), true);
     });
 
-    // scroll the chat → move the thumb (one-way lock while dragging)
+    // scroll the chat → move the timeline (one-way lock while dragging)
     const scrollHandler = () => {
       if (dragging) return;
       fromScroll();
     };
+    function fromScroll() {
+      const max = chatScroll.scrollHeight - chatScroll.clientHeight;
+      const p = max > 0 ? chatScroll.scrollTop / max : 0;
+      applyPos(p);
+    }
     chatScroll.removeEventListener("scroll", scrollHandler);
     chatScroll.addEventListener("scroll", scrollHandler);
 
