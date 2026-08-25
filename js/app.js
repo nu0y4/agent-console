@@ -416,11 +416,21 @@
     const dotEls = [];
     const DOT_SPACING = 26; // px between dots
     const contentWidth = N > 1 ? (N - 1) * DOT_SPACING : 0;
+    // absolute container collapses to 0 width; give it its real strip width
+    content.style.width = contentWidth ? contentWidth + "px" : "100%";
     if (N > 1) {
+      // every 5th node gets a time label so the scroll is visibly moving
       for (let i = 0; i < N; i++) {
         const dot = document.createElement("div");
         dot.className = "scrub-dot";
         dot.style.left = `${i * DOT_SPACING}px`;
+        if (i % 5 === 0 && msgTimes[magnetIdx[i]]) {
+          const lab = document.createElement("span");
+          lab.className = "scrub-timelabel";
+          lab.style.left = `${i * DOT_SPACING}px`;
+          lab.textContent = fmtClock(msgTimes[magnetIdx[i]]);
+          dotsWrap.appendChild(lab);
+        }
         dotsWrap.appendChild(dot);
         dotEls.push(dot);
       }
