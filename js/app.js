@@ -407,13 +407,19 @@
     const pxPerMs = duration > 0 ? stripW / duration : 0;
 
     if (tStart && tEnd && duration > 0) {
-      // build ticks across [t0, t1] at minor resolution, classify each
-      let cur = Math.floor(t0 / minorMs) * minorMs;
+      // origin = earliest whole major-step boundary (so the first major tick
+      // lands exactly at x=0, flush under the marker — no left gap)
+      const origin = Math.floor(t0 / stepMs) * stepMs;
+      const span = t1 - origin; // may be slightly longer than duration
+      const px = stripW / span;
+
+      // ticks: minor resolution from origin to t1
+      let cur = origin;
       let guard = 0;
       while (cur <= t1 && guard < 2000) {
-        const x = (cur - t0) * pxPerMs;
-        const isMajor = (cur % stepMs) < minorMs / 2;
-        const isMid = !isMajor && (cur % midMs) < minorMs / 2;
+        const x = (cur - origin) * px;
+        const isMajor = Math.abs(cur % stepMs) < minorMs / 2;
+        const isMid = !isMajor && Math.abs(cur % midMs) < minorMs / 2;
         const tick = document.createElement("div");
         tick.className = "scrub-dot" + (isMajor ? " major" : isMid ? " mid" : "");
         tick.style.left = `${x}px`;
@@ -435,7 +441,7 @@
       // event dots at every message timestamp (amber)
       for (const m of s.messages) {
         if (!m.timestamp) continue;
-        const x = (new Date(m.timestamp) - t0) * pxPerMs;
+        const x = (new Date(m.timestamp) - origin) * px;
         if (x < 0 || x > stripW) continue;
         const ev = document.createElement("div");
         ev.className = "scrub-ev";
