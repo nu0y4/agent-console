@@ -366,6 +366,26 @@ code, kbd, .mono { font-family: var(--mono); }
   display: flex; flex-direction: column; gap: 22px;
 }
 
+/* ---- 消息类型筛选条 ---- */
+.msg-filter {
+  display: flex; align-items: center; gap: 6px;
+  padding: 8px 26px;
+  border-bottom: 1px solid var(--line-soft);
+  background: var(--bg-elev-1);
+  flex-wrap: wrap;
+}
+.msg-filter[hidden] { display: none; }
+.msg-filter .spacer { flex: 1; }
+.jump-btn {
+  height: 24px; padding: 0 10px;
+  border: 1px solid var(--line); border-radius: 6px;
+  background: transparent; color: var(--text-dim);
+  font: 600 11px var(--sans); cursor: pointer;
+  transition: border-color var(--dur), color var(--dur);
+}
+.jump-btn:hover { border-color: var(--teal-line); color: var(--teal-deep); }
+.jump-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+
 /* ============================================================
    Timeline scrubber — fixed center marker, scrolling timeline
    ============================================================ */
@@ -418,7 +438,7 @@ code, kbd, .mono { font-family: var(--mono); }
   pointer-events: none;
   white-space: nowrap;
 }
-/* 事件点（消息位置） */
+/* 事件点（消息位置），按类型着色 */
 .scrub-ev {
   position: absolute; top: 7px;
   width: 6px; height: 6px;
@@ -429,6 +449,10 @@ code, kbd, .mono { font-family: var(--mono); }
   pointer-events: none;
   z-index: 1;
 }
+.scrub-ev.ev-user { background: var(--blue); }
+.scrub-ev.ev-ai { background: var(--teal); }
+.scrub-ev.ev-tool { background: oklch(0.72 0.13 68); }
+.scrub-ev.ev-thinking { background: oklch(0.55 0.015 220); }
 /* 中央固定指针：短竖线 + 顶部圆点（对齐刻度基线 16px） */
 .scrub-marker {
   position: absolute; top: 0; bottom: 0; left: 50%;

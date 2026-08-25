@@ -34,6 +34,7 @@
   let activeFilter = "all";
   let searchResultsState = [];
   let selIdx = -1;
+  let msgFilterType = "all"; // "all" | "user" | "tool" | "ai" | "thinking"
 
   /* ---------- helpers ---------- */
   function fmtClock(ts) {
@@ -243,6 +244,31 @@
     return `<svg class="mini-ic" viewBox="0 0 16 16">${paths}</svg>`;
   }
 
+  // 消息类型判定：返回该消息包含的所有类型（一个 assistant 消息可能含多种 block）
+  function messageTypes(m) {
+    if (!m) return [];
+    const types = new Set();
+    if (m.kind === "user") types.add("user");
+    if (m.kind === "system") types.add("system");
+    if (m.kind === "assistant") {
+      for (const b of (m.blocks || [])) {
+        if (b.kind === "text") types.add("ai");
+        else if (b.kind === "thinking") types.add("thinking");
+        else if (b.kind === "tool_use") types.add("tool");
+      }
+    }
+    return Array.from(types);
+  }
+  // 主类型（用于着色/分类）：优先级 tool > thinking > ai > user
+  function primaryType(m) {
+    const t = messageTypes(m);
+    if (t.includes("tool")) return "tool";
+    if (t.includes("thinking")) return "thinking";
+    if (t.includes("ai")) return "ai";
+    if (t.includes("user")) return "user";
+    return "system";
+  }
+
   function showLoading(text) {
     timeline.innerHTML = "";
     chatTitle.textContent = "正在加载会话…";
@@ -273,11 +299,13 @@
       $("#chatId").hidden = true;
       $("#cidFile").textContent = "";
       $("#scrub").hidden = true;
+      $("#msgFilter").hidden = true;
       return;
     }
 
     // lazy-load: metadata-only session not parsed yet → placeholder + fetch
     if (!s.loaded) {
+      $("#msgFilter").hidden = true;
       chatTitle.textContent = s.title;
       chatMeta.textContent = s._loading ? "正在加载内容…" : "点击查看会话内容";
       chatEmpty.style.display = "flex";
@@ -295,6 +323,8 @@
     chatTitle.textContent = s.title;
     chatMeta.textContent =
       `${s.stats.total} 条消息 · ${s.stats.user} 用户 · ${s.stats.ai} AI · ${s.stats.tool} 工具 · ${fmtDate(s.firstTs)}`;
+    $("#msgFilter").hidden = false;
+    syncMsgFilterChips();
 
     // session id + resume command
     const chatId = $("#chatId");
@@ -312,10 +342,16 @@
     }
 
     const frag = document.createDocumentFragment();
+    const filter = msgFilterType; // "all" | "user" | "tool" | "ai" | "thinking"
     s.messages.forEach((m, mi) => {
+      // 类型筛选
+      const types = messageTypes(m);
+      if (filter !== "all" && !types.includes(filter)) return;
+
       const row = document.createElement("div");
       row.className = "msg" + (m.kind === "user" ? " msg--user" : m.kind === "assistant" ? " msg--assistant" : "");
       row.dataset.msgid = mi;
+      row.dataset.types = types.join(",");
 
       const head = document.createElement("div");
       head.className = "msg-head";
@@ -439,13 +475,13 @@
         guard++;
       }
 
-      // event dots at every message timestamp (amber)
+      // event dots at every message timestamp, colored by type
       for (const m of s.messages) {
         if (!m.timestamp) continue;
         const x = (new Date(m.timestamp) - origin) * px;
         if (x < 0 || x > stripW) continue;
         const ev = document.createElement("div");
-        ev.className = "scrub-ev";
+        ev.className = "scrub-ev ev-" + primaryType(m);
         ev.style.left = `${x}px`;
         dotsWrap.appendChild(ev);
       }
@@ -752,7 +788,7 @@
     if (r.midx == null) return;
     const row = timeline.querySelector(`[data-msgid="${r.midx}"]`);
     if (!row) return;
-    row.scrollIntoView({ block: "center" });
+    chatScroll.scrollTop = row.offsetTop - chatScroll.clientHeight / 2 + row.offsetHeight / 2;
     let target = row;
     if (r.bidx >= 0) {
       const blk = row.querySelector(`[data-bidx="${r.bidx}"]`);
@@ -900,6 +936,62 @@
   });
 
   /* ---------- events ---------- */
+  // 消息类型筛选
+  function syncMsgFilterChips() {
+    document.querySelectorAll(".msg-filter .chip").forEach((c) => {
+      c.classList.toggle("on", c.dataset.type === msgFilterType);
+    });
+  }
+  document.querySelectorAll(".msg-filter .chip").forEach((c) => {
+    c.addEventListener("click", () => {
+      msgFilterType = c.dataset.type;
+      syncMsgFilterChips();
+      renderChat();
+    });
+  });
+
+  // 上下跳转：定位到指定类型消息
+  function visibleMsgIndices() {
+    const s = sessions.find((x) => x.id === selectedId);
+    if (!s) return [];
+    const idx = [];
+    s.messages.forEach((m, mi) => {
+      const types = messageTypes(m);
+      if (msgFilterType === "all" || types.includes(msgFilterType)) idx.push(mi);
+    });
+    return idx;
+  }
+  function currentMsgIndex() {
+    // 当前滚动位置对应的第一条可见消息
+    const rows = timeline.querySelectorAll(".msg");
+    let best = null;
+    for (const r of rows) {
+      if (r.getBoundingClientRect().top < chatScroll.getBoundingClientRect().top + 50) {
+        best = r;
+      } else break;
+    }
+    return best ? Number(best.dataset.msgid) : -1;
+  }
+  function jumpToType(dir) {
+    const indices = visibleMsgIndices();
+    if (!indices.length) return;
+    const cur = currentMsgIndex();
+    let target = -1;
+    if (dir === "next") {
+      target = indices.find((i) => i > cur) ?? indices[0];
+    } else {
+      const rev = [...indices].reverse();
+      target = rev.find((i) => i < cur) ?? indices[indices.length - 1];
+    }
+    if (target < 0) return;
+    const row = timeline.querySelector(`[data-msgid="${target}"]`);
+    if (!row) return;
+    chatScroll.scrollTop = row.offsetTop - 80;
+    flash(row);
+  }
+  $("#jumpNext").addEventListener("click", () => jumpToType("next"));
+  $("#jumpPrev").addEventListener("click", () => jumpToType("prev"));
+
   // drag & drop .jsonl files anywhere → load like 导入会话
   const dropOverlay = $("#dropOverlay");
   let dragDepth = 0;
@@ -1016,7 +1108,14 @@
       el.classList.toggle("sel", i === selIdx);
     });
     const selEl = document.querySelector(`.sr-item.sel`);
-    if (selEl) selEl.scrollIntoView({ block: "nearest" });
+    if (selEl && searchResults) {
+      const srTop = searchResults.scrollTop;
+      const elTop = selEl.offsetTop;
+      const elH = selEl.offsetHeight;
+      const vpH = searchResults.clientHeight;
+      if (elTop < srTop) searchResults.scrollTop = elTop;
+      else if (elTop + elH > srTop + vpH) searchResults.scrollTop = elTop + elH - vpH;
+    }
   }
 
   /* ---------- backend sync ---------- */

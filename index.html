@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Agent Console — 会话管理器</title>
-<link rel="stylesheet" href="css/styles.css?v=32">
+<link rel="stylesheet" href="css/styles.css?v=33">
 </head>
 <body>
 
@@ -92,6 +92,17 @@
       </span>
     </div>
 
+    <div class="msg-filter" id="msgFilter" hidden>
+      <button class="chip on" data-type="all">全部</button>
+      <button class="chip" data-type="user">用户</button>
+      <button class="chip" data-type="tool">工具</button>
+      <button class="chip" data-type="ai">AI</button>
+      <button class="chip" data-type="thinking">思考</button>
+      <span class="spacer"></span>
+      <button class="jump-btn" id="jumpPrev" title="上一条此类消息">↑ 上一条</button>
+      <button class="jump-btn" id="jumpNext" title="下一条此类消息">↓ 下一条</button>
+    </div>
+
     <div class="chat-empty" id="chatEmpty">
       <div class="empty-ring"></div>
       <h2>Agent Console</h2>
@@ -165,9 +176,9 @@
   </div>
 </div>
 
-<script src="js/highlighter.js?v=32"></script>
-<script src="js/parser.js?v=32"></script>
-<script src="js/session-cache.js?v=32"></script>
-<script src="js/app.js?v=32"></script>
+<script src="js/highlighter.js?v=33"></script>
+<script src="js/parser.js?v=33"></script>
+<script src="js/session-cache.js?v=33"></script>
+<script src="js/app.js?v=33"></script>
 </body>
 </html>
