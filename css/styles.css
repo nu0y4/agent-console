@@ -383,7 +383,7 @@ code, kbd, .mono { font-family: var(--mono); }
 .scrub-range { color: var(--teal-deep); font-weight: 600; font-family: var(--mono); font-size: 12px; }
 .scrub-track {
   position: relative;
-  height: 40px;
+  height: 54px;
   overflow: hidden;
   cursor: grab;
 }
@@ -400,11 +400,11 @@ code, kbd, .mono { font-family: var(--mono); }
   position: absolute; inset: 0;
   pointer-events: none;
 }
-/* 三级刻度：细(minor) / 中(mid) / 粗(major) */
+/* 三级刻度：细(minor) / 中(mid) / 粗(major) —— 刻度基线在上方 1/3 处 */
 .scrub-dot {
-  position: absolute; top: 50%;
+  position: absolute; top: 16px;
   width: 1px; height: 7px;
-  transform: translate(-50%, -50%);
+  transform: translateX(-50%);
   background: var(--text-faint);
   border-radius: 1px;
   box-sizing: border-box;
@@ -412,7 +412,7 @@ code, kbd, .mono { font-family: var(--mono); }
 .scrub-dot.mid { height: 11px; background: var(--text-dim); }
 .scrub-dot.major { height: 15px; width: 1.5px; background: var(--text-dim); }
 .scrub-timelabel {
-  position: absolute; top: calc(50% + 12px);
+  position: absolute; top: 30px;
   transform: translateX(-50%);
   font-family: var(--mono); font-size: 9px; color: var(--text-faint);
   pointer-events: none;
@@ -420,7 +420,7 @@ code, kbd, .mono { font-family: var(--mono); }
 }
 /* 事件点（消息位置） */
 .scrub-ev {
-  position: absolute; top: calc(50% - 9px);
+  position: absolute; top: 7px;
   width: 6px; height: 6px;
   border-radius: 50%;
   background: oklch(0.72 0.13 68);
@@ -429,7 +429,7 @@ code, kbd, .mono { font-family: var(--mono); }
   pointer-events: none;
   z-index: 1;
 }
-/* 中央固定指针：短竖线 + 顶部圆点 */
+/* 中央固定指针：短竖线 + 顶部圆点（对齐刻度基线 16px） */
 .scrub-marker {
   position: absolute; top: 0; bottom: 0; left: 50%;
   width: 2px;
@@ -439,7 +439,7 @@ code, kbd, .mono { font-family: var(--mono); }
   z-index: 3;
 }
 .scrub-marker::after {
-  content: ""; position: absolute; top: 50%; left: 50%;
+  content: ""; position: absolute; top: 16px; left: 50%;
   width: 9px; height: 9px; border-radius: 50%;
   transform: translate(-50%, -50%);
   background: var(--teal);
