@@ -506,21 +506,30 @@
       // drag horizontally: timeline follows so marker maps to position
       return (clientX - r.left) / r.width;
     }
-    // inertia: track recent velocity for a flick-to-scroll feel on release
+    // inertia: track recent velocity for a flick-to-scroll feel on release.
+    // Dragging only engages after a small movement threshold — a plain click
+    // must NOT scrub.
+    let dragStarted = false;
     let lastPX = 0;
     let lastPTime = 0;
     let inertiaTimer = null;
+    const DRAG_THRESHOLD = 4; // px before a press becomes a drag
     track.addEventListener("pointerdown", (e) => {
       dragging = true;
-      scrub.classList.add("dragging");
-      track.setPointerCapture(e.pointerId);
+      dragStarted = false;
       const p = posFromEvent(e.clientX);
       lastPX = p; lastPTime = performance.now();
-      scrubToP(p, false);
+      track.setPointerCapture(e.pointerId);
     });
     track.addEventListener("pointermove", (e) => {
       if (!dragging) return;
       const p = posFromEvent(e.clientX);
+      if (!dragStarted) {
+        // only start scrubbing once the pointer actually moved far enough
+        if (Math.abs((p - lastPX) * track.clientWidth) < DRAG_THRESHOLD) return;
+        dragStarted = true;
+        scrub.classList.add("dragging");
+      }
       const now = performance.now();
       scrubToP(p, false);
       if (now - lastPTime > 40) { // sample velocity at ~25Hz
@@ -530,6 +539,7 @@
     const endDrag = (e) => {
       dragging = false;
       scrub.classList.remove("dragging");
+      if (!dragStarted) return; // was a click, not a drag — don't scrub
       if (!(e && typeof e.clientX === "number")) return;
       const p = posFromEvent(e.clientX);
       scrubToP(p, true);
@@ -561,11 +571,6 @@
     }
     track.addEventListener("pointerup", endDrag);
     track.addEventListener("pointercancel", endDrag);
-
-    // click anywhere on track also scrubs (with magnet)
-    track.addEventListener("click", (e) => {
-      if (e.pointerType === "mouse") scrubToP(posFromEvent(e.clientX), true);
-    });
 
     // scroll the chat → move the timeline (one-way lock while dragging)
     const scrollHandler = () => {
