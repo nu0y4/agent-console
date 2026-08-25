@@ -410,11 +410,14 @@
       return p;
     };
 
-    // tick dots — the timeline strip (wide) the marker slides over
+    // tick dots — the timeline strip (wide) the marker slides over.
+    // Spacing adapts so the strip is always much wider than the track, even
+    // for short sessions — otherwise maxShift is 0 and nothing scrolls.
     const dotsWrap = $("#scrubDots");
     dotsWrap.innerHTML = "";
     const dotEls = [];
-    const DOT_SPACING = 26; // px between dots
+    const trackW = track.clientWidth || 600;
+    const DOT_SPACING = N > 1 ? Math.max(26, Math.round((trackW * 1.6) / (N - 1))) : 26;
     const contentWidth = N > 1 ? (N - 1) * DOT_SPACING : 0;
     // absolute container collapses to 0 width; give it its real strip width
     content.style.width = contentWidth ? contentWidth + "px" : "100%";
