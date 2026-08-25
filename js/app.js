@@ -505,20 +505,57 @@
       // drag horizontally: timeline follows so marker maps to position
       return (clientX - r.left) / r.width;
     }
+    // inertia: track recent velocity for a flick-to-scroll feel on release
+    let lastPX = 0;
+    let lastPTime = 0;
+    let inertiaTimer = null;
     track.addEventListener("pointerdown", (e) => {
       dragging = true;
       scrub.classList.add("dragging");
       track.setPointerCapture(e.pointerId);
-      scrubToP(posFromEvent(e.clientX), false);
+      const p = posFromEvent(e.clientX);
+      lastPX = p; lastPTime = performance.now();
+      scrubToP(p, false);
     });
     track.addEventListener("pointermove", (e) => {
-      if (dragging) scrubToP(posFromEvent(e.clientX), false);
+      if (!dragging) return;
+      const p = posFromEvent(e.clientX);
+      const now = performance.now();
+      scrubToP(p, false);
+      if (now - lastPTime > 40) { // sample velocity at ~25Hz
+        lastPX = p; lastPTime = now;
+      }
     });
     const endDrag = (e) => {
       dragging = false;
       scrub.classList.remove("dragging");
-      if (e && typeof e.clientX === "number") scrubToP(posFromEvent(e.clientX), true);
+      if (!(e && typeof e.clientX === "number")) return;
+      const p = posFromEvent(e.clientX);
+      scrubToP(p, true);
+      // flick: velocity in px/ms over the last sample
+      const dt = Math.max(performance.now() - lastPTime, 1);
+      const v = (p - lastPX) / dt; // progress per ms
+      if (Math.abs(v) > 0.0004) startInertia(v);
     };
+    function startInertia(v) {
+      if (inertiaTimer) cancelAnimationFrame(inertiaTimer);
+      let vel = v;
+      const step = () => {
+        vel *= 0.92; // decay
+        if (Math.abs(vel) < 0.00001) { inertiaTimer = null; return; }
+        const cur = progressOf();
+        const np = Math.max(0, Math.min(1, cur + vel * 16));
+        applyPos(np);
+        const max = chatScroll.scrollHeight - chatScroll.clientHeight;
+        chatScroll.scrollTop = max * np;
+        inertiaTimer = requestAnimationFrame(step);
+      };
+      inertiaTimer = requestAnimationFrame(step);
+    }
+    function progressOf() {
+      const max = chatScroll.scrollHeight - chatScroll.clientHeight;
+      return max > 0 ? chatScroll.scrollTop / max : 0;
+    }
     track.addEventListener("pointerup", endDrag);
     track.addEventListener("pointercancel", endDrag);
 
