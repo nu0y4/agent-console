@@ -374,222 +374,164 @@
     const startEl = $("#scrubStart");
     const endEl = $("#scrubEnd");
     const rangeEl = $("#scrubRange");
-    // make visible FIRST so track.clientWidth reports a real size
     scrub.hidden = false;
 
-    // anchor time for earliest message (fall back to session start)
-    const ts = s.messages
-      .map((m) => m.timestamp)
-      .filter(Boolean)
-      .sort()[0] || s.firstTs || null;
+    // ---- real time axis (not message count) ----
+    const times = s.messages.map((m) => m.timestamp).filter(Boolean).sort();
+    const tStart = times.length ? times[0] : null;
+    const tEnd = times.length ? times[times.length - 1] : null;
+    const duration = (tStart && tEnd) ? (new Date(tEnd) - new Date(tStart)) : 0;
 
-    const fmt = (t) => (t ? `${fmtDate(t)} ${fmtClock(t)}` : "—");
-    startEl.textContent = ts ? fmt(ts) : "会话开始";
-    endEl.textContent = s.messages.length
-      ? (s.messages[s.messages.length - 1].timestamp ? fmt(s.messages[s.messages.length - 1].timestamp) : "会话结束")
-      : "—";
+    const fmtFull = (t) => (t ? `${fmtDate(t)} ${fmtClock(t)}` : "—");
+    const fmtShort = (t) => (t ? fmtClock(t) : "—");
+    startEl.textContent = tStart ? fmtFull(tStart) : "会话开始";
+    endEl.textContent = tEnd ? fmtFull(tEnd) : "会话结束";
 
-    // per-message timestamps
-    const msgTimes = s.messages.map((m) => m.timestamp);
-    const setRange = (p) => {
-      const idx = Math.min(msgTimes.length - 1, Math.max(0, Math.round(p * (msgTimes.length - 1))));
-      const t = msgTimes[idx];
-      rangeEl.textContent = t ? fmt(t) : (ts ? fmt(ts) : "");
-      tickEl.textContent = t ? fmtClock(t) : "";
-    };
+    // pick a "nice" time step so ticks land on round times
+    function niceStep(ms) {
+      const steps = [1000, 2000, 5000, 10000, 15000, 30000, 60000, 120000, 300000, 600000, 1800000, 3600000, 7200000, 21600000, 43200000];
+      for (const st of steps) if (ms / st <= 12) return st;
+      return steps[steps.length - 1];
+    }
+    const stepMs = duration > 0 ? niceStep(duration) : 30000;
 
-    // magnet anchors
-    const magnetIdx = [];
-    msgTimes.forEach((t, i) => { if (t) magnetIdx.push(i); });
-    const N = magnetIdx.length;
-    const MAGNET_RATIO = 0.34;
-    const magnetSnap = (p) => {
-      if (N < 2) return p;
-      const x = p * (N - 1);
-      const nearest = Math.round(x);
-      const dist = x - nearest;
-      if (Math.abs(dist) <= MAGNET_RATIO) return nearest / (N - 1);
-      return p;
-    };
+    // how many px per second on the strip
+    const trackW = track.clientWidth || 600;
+    const stripW = Math.round(trackW * 1.6);
+    content.style.width = stripW + "px";
+    // seconds visible across the strip
+    const secondsSpan = duration / 1000;
+    const pxPerSec = secondsSpan > 0 ? stripW / secondsSpan : 0;
+    const stepPx = Math.max(pxPerSec * (stepMs / 1000), 40);
 
-    // tick marks — fixed 24px pitch, capped, so a 1500-node session doesn't
-    // render a solid wall of vertical lines. The marker still maps to any
-    // progress via magnet anchors; the ticks are just visual guides.
+    // build ticks at round times, evenly spaced by stepPx
     const dotsWrap = $("#scrubDots");
     dotsWrap.innerHTML = "";
-    const dotEls = [];
-    const trackW = track.clientWidth || 600;
-    const contentWidth = Math.round(trackW * 1.6);
-    content.style.width = contentWidth + "px";
-    const TICK = 24; // px between ticks
-    const tickCount = Math.min(Math.floor(contentWidth / TICK), 200);
-    for (let k = 0; k <= tickCount; k++) {
-      const dot = document.createElement("div");
-      dot.className = "scrub-dot";
-      dot.style.left = `${k * TICK}px`;
-      dotsWrap.appendChild(dot);
-      dotEls.push(dot);
+    const tickEls = [];
+    if (tStart && tEnd) {
+      const t0 = new Date(tStart).getTime();
+      const t1 = new Date(tEnd).getTime();
+      let cur = Math.floor(t0 / stepMs) * stepMs;
+      let guard = 0;
+      while (cur <= t1 && guard < 300) {
+        const x = ((cur - t0) / duration) * stripW;
+        const tick = document.createElement("div");
+        tick.className = "scrub-dot";
+        tick.style.left = `${x}px`;
+        dotsWrap.appendChild(tick);
+        tickEls.push(tick);
+        // time label under major ticks (every other)
+        if (guard % 2 === 0) {
+          const lab = document.createElement("span");
+          lab.className = "scrub-timelabel";
+          lab.style.left = `${x}px`;
+          lab.dataset.x = String(x);
+          lab.textContent = fmtClock(new Date(cur).toISOString());
+          dotsWrap.appendChild(lab);
+        }
+        cur += stepMs;
+        guard++;
+      }
     }
-    // time labels at a readable cadence (every 8th tick)
-    const LABEL_EVERY = 8;
-    for (let k = 0; k <= tickCount; k += LABEL_EVERY) {
-      // map tick position back to a node index for a timestamp
-      const frac = (k * TICK) / contentWidth;
-      const idx = Math.round(frac * (N - 1));
-      const t = msgTimes[magnetIdx[idx]];
-      if (!t) continue;
-      const lab = document.createElement("span");
-      lab.className = "scrub-timelabel";
-      lab.style.left = `${k * TICK}px`;
-      lab.dataset.x = String(k * TICK);
-      lab.textContent = fmtClock(t);
-      dotsWrap.appendChild(lab);
+
+    // time → progress [0,1]
+    function timeToP(t) {
+      if (!duration) return 0;
+      return Math.max(0, Math.min(1, (new Date(t) - new Date(tStart)) / duration));
     }
-    const setActiveDot = (p) => {
-      if (!dotEls.length) return;
-      const i = Math.min(dotEls.length - 1, Math.max(0, Math.round(p * (dotEls.length - 1))));
-      dotEls.forEach((d, di) => d.classList.toggle("active", di === i));
+    // progress → time string
+    function pToTime(p) {
+      if (!duration) return fmtFull(tStart);
+      return fmtFull(new Date(new Date(tStart).getTime() + p * duration).toISOString());
+    }
+
+    const setRange = (p) => {
+      rangeEl.textContent = pToTime(p);
+      tickEl.textContent = fmtShort(new Date(new Date(tStart).getTime() + p * duration).toISOString());
     };
 
     const rows = timeline.querySelectorAll(".msg");
     const total = rows.length;
     let dragging = false;
-
     const setBubble = (label) => { bubble.textContent = label; };
 
-    // move the timeline strip so the marker (center) lands on progress p
     function applyPos(p) {
       p = Math.max(0, Math.min(1, p));
-      const trackW = track.clientWidth;
-      const maxShift = Math.max(0, contentWidth - trackW);
+      const trackWc = track.clientWidth;
+      const maxShift = Math.max(0, stripW - trackWc);
       content.style.transform = `translateX(${(p * -maxShift).toFixed(1)}px)`;
       setRange(p);
-      setActiveDot(p);
     }
 
-    // keep the strip 1.6× the track when the window resizes
-    const onResize = () => {
-      if (!document.body.contains(content)) return; // torn down
-      const w = Math.round(track.clientWidth * 1.6);
-      content.style.width = w + "px";
-      const factor = w / contentWidth;
-      dotEls.forEach((d, i) => { d.style.left = `${i * TICK * factor}px`; });
-      document.querySelectorAll(".scrub-timelabel").forEach((el) => {
-        el.style.left = `${(parseFloat(el.dataset.x) || 0) * factor}px`;
-      });
-      applyPos(chatScroll.scrollTop / Math.max(chatScroll.scrollHeight - chatScroll.clientHeight, 1));
-    };
-    window.addEventListener("resize", onResize);
-
-    function scrubToP(p, magnet) {
-      p = Math.max(0, Math.min(1, p));
-      let snapped = false;
-      if (magnet !== false) {
-        const snappedP = magnetSnap(p);
-        snapped = snappedP !== p;
-        p = snappedP;
-      }
-      applyPos(p);
-      // scroll the chat to the same progress
+    // scroll the chat by the message nearest to a given progress
+    function scrollChatTo(p) {
       const max = chatScroll.scrollHeight - chatScroll.clientHeight;
       chatScroll.scrollTop = max * p;
+    }
+
+    function scrubToP(p) {
+      p = Math.max(0, Math.min(1, p));
+      applyPos(p);
+      scrollChatTo(p);
       const idx = Math.min(total - 1, Math.max(0, Math.round(p * (total - 1))));
       const row = rows[idx];
-      if (row) {
-        const msgTs = s.messages[idx].timestamp;
-        setBubble(row.dataset.msgid !== undefined ? `#${Number(row.dataset.msgid) + 1} ${msgTs ? fmt(msgTs) : ""}` : "");
-      }
+      if (row) setBubble(`#${Number(row.dataset.msgid) + 1} ${pToTime(p)}`);
     }
 
     function posFromEvent(clientX) {
       const r = track.getBoundingClientRect();
-      // drag horizontally: timeline follows so marker maps to position
       return (clientX - r.left) / r.width;
     }
-    // inertia: track recent velocity for a flick-to-scroll feel on release.
-    // Dragging only engages after a small movement threshold — a plain click
-    // must NOT scrub.
+
     let dragStarted = false;
-    let lastPX = 0;
-    let lastPTime = 0;
+    let lastPX = 0, lastPTime = 0;
     let inertiaTimer = null;
-    const DRAG_THRESHOLD = 4; // px before a press becomes a drag
+    const DRAG_THRESHOLD = 4;
+
     track.addEventListener("pointerdown", (e) => {
       dragging = true;
       dragStarted = false;
-      const p = posFromEvent(e.clientX);
-      lastPX = p; lastPTime = performance.now();
+      lastPX = posFromEvent(e.clientX);
+      lastPTime = performance.now();
       track.setPointerCapture(e.pointerId);
     });
     track.addEventListener("pointermove", (e) => {
       if (!dragging) return;
       const p = posFromEvent(e.clientX);
       if (!dragStarted) {
-        // only start scrubbing once the pointer actually moved far enough
         if (Math.abs((p - lastPX) * track.clientWidth) < DRAG_THRESHOLD) return;
         dragStarted = true;
         scrub.classList.add("dragging");
       }
       const now = performance.now();
-      scrubToP(p, false);
-      if (now - lastPTime > 40) { // sample velocity at ~25Hz
-        lastPX = p; lastPTime = now;
-      }
+      scrubToP(p);
+      if (now - lastPTime > 40) { lastPX = p; lastPTime = now; }
     });
     const endDrag = (e) => {
       dragging = false;
       scrub.classList.remove("dragging");
-      if (!dragStarted) return; // was a click, not a drag — don't scrub
+      if (!dragStarted) return;
       if (!(e && typeof e.clientX === "number")) return;
       const p = posFromEvent(e.clientX);
-      // flick velocity drives a smooth glide first
       const dt = Math.max(performance.now() - lastPTime, 1);
-      const v = (p - lastPX) / dt; // progress per ms
-      if (Math.abs(v) > 0.0004) {
-        startInertia(v, true);
-      } else {
-        scrubToP(p, true); // slow release: snap, magnetized
-      }
+      const v = (p - lastPX) / dt;
+      if (Math.abs(v) > 0.0004) startInertia(v);
+      else scrubToP(p);
     };
-    function startInertia(v, magnetAtEnd) {
+    function startInertia(v) {
       if (inertiaTimer) cancelAnimationFrame(inertiaTimer);
       let vel = v;
       const step = () => {
         if (!document.body.contains(content)) { inertiaTimer = null; return; }
-        vel *= 0.92; // decay
-        if (Math.abs(vel) < 0.00001) {
-          inertiaTimer = null;
-          // glide ended → settle smoothly onto the nearest node
-          if (magnetAtEnd) animateTo(magnetSnap(progressOf()));
-          return;
-        }
+        vel *= 0.92;
+        if (Math.abs(vel) < 0.00001) { inertiaTimer = null; return; }
         const cur = progressOf();
         const np = Math.max(0, Math.min(1, cur + vel * 16));
         applyPos(np);
-        const max = chatScroll.scrollHeight - chatScroll.clientHeight;
-        chatScroll.scrollTop = max * np;
+        scrollChatTo(np);
         inertiaTimer = requestAnimationFrame(step);
       };
       inertiaTimer = requestAnimationFrame(step);
-    }
-    // smooth tween from current position to target progress (no jump)
-    function animateTo(target) {
-      const from = progressOf();
-      const diff = target - from;
-      if (Math.abs(diff) < 0.001) return;
-      const dur = 120;
-      const t0 = performance.now();
-      const ease = (t) => 1 - Math.pow(1 - t, 3); // ease-out cubic
-      const raf = (now) => {
-        if (!document.body.contains(content)) return;
-        const t = Math.min((now - t0) / dur, 1);
-        const np = from + diff * ease(t);
-        applyPos(np);
-        const max = chatScroll.scrollHeight - chatScroll.clientHeight;
-        chatScroll.scrollTop = max * np;
-        if (t < 1) requestAnimationFrame(raf);
-      };
-      requestAnimationFrame(raf);
     }
     function progressOf() {
       const max = chatScroll.scrollHeight - chatScroll.clientHeight;
@@ -598,20 +540,11 @@
     track.addEventListener("pointerup", endDrag);
     track.addEventListener("pointercancel", endDrag);
 
-    // scroll the chat → move the timeline (one-way lock while dragging)
-    const scrollHandler = () => {
-      if (dragging) return;
-      fromScroll();
-    };
-    function fromScroll() {
-      const max = chatScroll.scrollHeight - chatScroll.clientHeight;
-      const p = max > 0 ? chatScroll.scrollTop / max : 0;
-      applyPos(p);
-    }
+    const scrollHandler = () => { if (!dragging) applyPos(progressOf()); };
     chatScroll.removeEventListener("scroll", scrollHandler);
     chatScroll.addEventListener("scroll", scrollHandler);
 
-    const startP = total ? chatScroll.scrollTop / Math.max(chatScroll.scrollHeight - chatScroll.clientHeight, 1) : 0;
+    const startP = total ? progressOf() : 0;
     applyPos(startP);
   }
 
