@@ -1207,8 +1207,10 @@
   }
 
   // Fetch + parse a single session's full content on demand.
+  // Uses a per-session in-flight promise so concurrent callers share one fetch.
   async function loadSession(s, silent) {
-    if (s.loaded || s._loading) return;
+    if (s.loaded) return;
+    if (s._loading) return; // another caller is loading it; it'll render when done
     s._loading = true;
     if (!silent) renderChat(); // show loading placeholder
     try {
@@ -1231,9 +1233,9 @@
     }
     s.loaded = true;
     s._loading = false;
-    // persist for next visit
+    // persist for next visit — fire-and-forget, never block the UI
     try {
-      await SessionCache.put(s.backendFile, {
+      SessionCache.put(s.backendFile, {
         mtime: s.mtime,
         messages: s.messages,
         stats: s.stats,
@@ -1241,7 +1243,7 @@
         firstTs: s.firstTs,
         lastTs: s.lastTs,
         sessionId: s.sessionId,
-      });
+      }).catch(() => {});
     } catch (e) {}
     if (silent) return;
     renderChat();
@@ -1276,7 +1278,16 @@
         buildIndex();
         return;
       }
-      await loadSession(slice[0], true);
+      const target = slice[0];
+      // if it's already being loaded (e.g. by a click), skip without counting —
+      // it'll finish via that other caller and re-render the sidebar
+      if (target._loading || target.loaded) {
+        done++;
+        loadProgressEl.textContent = `${done}/${total}`;
+        setTimeout(step, 4);
+        return;
+      }
+      await loadSession(target, true);
       done += slice.length;
       loadProgressEl.textContent = `${done}/${total}`;
       setTimeout(step, 4);
