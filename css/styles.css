@@ -396,11 +396,6 @@ code, kbd, .mono { font-family: var(--mono); }
   will-change: transform;
   background: linear-gradient(var(--scrub-line), var(--scrub-line)) center / 100% 1px no-repeat;
 }
-.scrub-line {
-  position: absolute; top: 50%; left: 0; right: 0; height: 1px;
-  background: var(--scrub-line);
-  transform: translateY(-50%);
-}
 .scrub-dots {
   position: absolute; inset: 0;
   pointer-events: none;
