@@ -374,6 +374,8 @@
     const startEl = $("#scrubStart");
     const endEl = $("#scrubEnd");
     const rangeEl = $("#scrubRange");
+    // make visible FIRST so track.clientWidth reports a real size
+    scrub.hidden = false;
 
     // anchor time for earliest message (fall back to session start)
     const ts = s.messages
@@ -411,26 +413,27 @@
     };
 
     // tick dots — the timeline strip (wide) the marker slides over.
-    // Spacing adapts so the strip is always much wider than the track, even
-    // for short sessions — otherwise maxShift is 0 and nothing scrolls.
+    // The strip is ALWAYS track-width × 1.6 regardless of node count or window
+    // width, so there is guaranteed scroll travel (maxShift > 0) in every case.
     const dotsWrap = $("#scrubDots");
     dotsWrap.innerHTML = "";
     const dotEls = [];
     const trackW = track.clientWidth || 600;
-    const DOT_SPACING = N > 1 ? Math.max(26, Math.round((trackW * 1.6) / (N - 1))) : 26;
-    const contentWidth = N > 1 ? (N - 1) * DOT_SPACING : 0;
-    // absolute container collapses to 0 width; give it its real strip width
-    content.style.width = contentWidth ? contentWidth + "px" : "100%";
+    const contentWidth = Math.round(trackW * 1.6);
+    content.style.width = contentWidth + "px";
+    // spread the N nodes evenly across the full strip
+    const DOT_SPACING = N > 1 ? contentWidth / (N - 1) : 0;
     if (N > 1) {
-      // every 5th node gets a time label so the scroll is visibly moving
       for (let i = 0; i < N; i++) {
+        const x = i * DOT_SPACING;
         const dot = document.createElement("div");
         dot.className = "scrub-dot";
-        dot.style.left = `${i * DOT_SPACING}px`;
+        dot.style.left = `${x}px`;
         if (i % 5 === 0 && msgTimes[magnetIdx[i]]) {
           const lab = document.createElement("span");
           lab.className = "scrub-timelabel";
-          lab.style.left = `${i * DOT_SPACING}px`;
+          lab.style.left = `${x}px`;
+          lab.dataset.x = String(x);
           lab.textContent = fmtClock(msgTimes[magnetIdx[i]]);
           dotsWrap.appendChild(lab);
         }
@@ -459,6 +462,19 @@
       setRange(p);
       setActiveDot(p);
     }
+
+    // keep the strip 1.6× the track when the window resizes
+    const onResize = () => {
+      const w = Math.round(track.clientWidth * 1.6);
+      content.style.width = w + "px";
+      const factor = w / contentWidth;
+      dotEls.forEach((d, i) => { d.style.left = `${i * DOT_SPACING * factor}px`; });
+      document.querySelectorAll(".scrub-timelabel").forEach((el) => {
+        el.style.left = `${(parseFloat(el.dataset.x) || 0) * factor}px`;
+      });
+      applyPos(chatScroll.scrollTop / Math.max(chatScroll.scrollHeight - chatScroll.clientHeight, 1));
+    };
+    window.addEventListener("resize", onResize);
 
     function scrubToP(p, magnet) {
       p = Math.max(0, Math.min(1, p));
@@ -522,8 +538,6 @@
 
     const startP = total ? chatScroll.scrollTop / Math.max(chatScroll.scrollHeight - chatScroll.clientHeight, 1) : 0;
     applyPos(startP);
-
-    scrub.hidden = false;
   }
 
   /* ---------- session management ---------- */
