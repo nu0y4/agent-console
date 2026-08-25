@@ -576,6 +576,9 @@ code, kbd, .mono { font-family: var(--mono); }
    Message row
    ============================================================ */
 .msg { display: flex; flex-direction: column; animation: rise var(--dur) var(--ease-out); }
+.msg--user { align-items: flex-end; }
+.msg--assistant { align-items: flex-start; }
+.msg--user .msg-head { flex-direction: row-reverse; }
 @keyframes rise { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
 
 .msg-head {
@@ -608,7 +611,7 @@ code, kbd, .mono { font-family: var(--mono); }
 .text-block.user {
   background: var(--bg-elev-2);
   border: 1px solid var(--line);
-  border-left: 3px solid var(--blue);
+  border-right: 3px solid var(--blue);
 }
 .text-block.assistant {
   background: var(--bg-elev-1);

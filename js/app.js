@@ -314,7 +314,7 @@
     const frag = document.createDocumentFragment();
     s.messages.forEach((m, mi) => {
       const row = document.createElement("div");
-      row.className = "msg";
+      row.className = "msg" + (m.kind === "user" ? " msg--user" : m.kind === "assistant" ? " msg--assistant" : "");
       row.dataset.msgid = mi;
 
       const head = document.createElement("div");
