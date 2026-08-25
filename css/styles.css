@@ -400,31 +400,51 @@ code, kbd, .mono { font-family: var(--mono); }
   position: absolute; inset: 0;
   pointer-events: none;
 }
+/* 三级刻度：细(minor) / 中(mid) / 粗(major) */
 .scrub-dot {
   position: absolute; top: 50%;
-  width: 1px; height: 10px;
+  width: 1px; height: 7px;
   transform: translate(-50%, -50%);
   background: var(--text-faint);
   border-radius: 1px;
   box-sizing: border-box;
 }
-.scrub-dot.active { background: var(--teal); }
+.scrub-dot.mid { height: 11px; background: var(--text-dim); }
+.scrub-dot.major { height: 15px; width: 1.5px; background: var(--text-dim); }
 .scrub-timelabel {
-  position: absolute; top: calc(50% + 10px);
+  position: absolute; top: calc(50% + 12px);
   transform: translateX(-50%);
   font-family: var(--mono); font-size: 9px; color: var(--text-faint);
   pointer-events: none;
   white-space: nowrap;
 }
-/* fixed center marker: a single short vertical line, no dot */
+/* 事件点（消息位置） */
+.scrub-ev {
+  position: absolute; top: calc(50% - 9px);
+  width: 6px; height: 6px;
+  border-radius: 50%;
+  background: oklch(0.72 0.13 68);
+  border: 1.5px solid var(--bg-elev-1);
+  transform: translateX(-50%);
+  pointer-events: none;
+  z-index: 1;
+}
+/* 中央固定指针：短竖线 + 顶部圆点 */
 .scrub-marker {
-  position: absolute; top: 50%; left: 50%;
-  width: 2px; height: 20px;
-  transform: translate(-50%, -50%);
+  position: absolute; top: 0; bottom: 0; left: 50%;
+  width: 2px;
+  transform: translateX(-50%);
   background: var(--teal);
-  border-radius: 1px;
   pointer-events: none;
   z-index: 3;
+}
+.scrub-marker::after {
+  content: ""; position: absolute; top: 50%; left: 50%;
+  width: 9px; height: 9px; border-radius: 50%;
+  transform: translate(-50%, -50%);
+  background: var(--teal);
+  border: 2px solid var(--bg-elev-1);
+  box-shadow: 0 1px 3px oklch(0.2 0.05 220 / 0.35);
 }
 .scrub-bubble {
   position: absolute;

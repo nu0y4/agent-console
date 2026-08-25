@@ -376,83 +376,84 @@
     const rangeEl = $("#scrubRange");
     scrub.hidden = false;
 
-    // ---- real time axis (not message count) ----
+    // ---- real time axis ----
     const times = s.messages.map((m) => m.timestamp).filter(Boolean).sort();
     const tStart = times.length ? times[0] : null;
     const tEnd = times.length ? times[times.length - 1] : null;
     const duration = (tStart && tEnd) ? (new Date(tEnd) - new Date(tStart)) : 0;
 
     const fmtFull = (t) => (t ? `${fmtDate(t)} ${fmtClock(t)}` : "—");
-    const fmtShort = (t) => (t ? fmtClock(t) : "—");
     startEl.textContent = tStart ? fmtFull(tStart) : "会话开始";
     endEl.textContent = tEnd ? fmtFull(tEnd) : "会话结束";
 
-    // pick a step so ticks are dense (20-40 across the strip)
+    // pick a "major" step so there are 6–15 major ticks (hour boundaries)
     function niceStep(ms) {
       const steps = [1000, 2000, 5000, 10000, 15000, 30000, 60000, 120000, 300000, 600000, 900000, 1800000, 3600000, 7200000, 10800000, 21600000, 43200000, 86400000];
-      for (const st of steps) if (ms / st <= 40) return st;
+      for (const st of steps) if (ms / st <= 15) return st;
       return steps[steps.length - 1];
     }
     const stepMs = duration > 0 ? niceStep(duration) : 30000;
+    const minorMs = stepMs / 4;   // 细刻度
+    const midMs = stepMs / 2;     // 中刻度
 
-    // how many px per second on the strip
-    const trackW = track.clientWidth || 600;
-    const stripW = Math.round(trackW * 1.6);
+    const pxPerMajor = 80;
+    const stripW = duration > 0 ? Math.round((duration / stepMs) * pxPerMajor) : 1200;
     content.style.width = stripW + "px";
-    // seconds visible across the strip
-    const secondsSpan = duration / 1000;
-    const pxPerSec = secondsSpan > 0 ? stripW / secondsSpan : 0;
-    const stepPx = Math.max(pxPerSec * (stepMs / 1000), 40);
 
-    // build ticks at round times, evenly spaced by stepPx
     const dotsWrap = $("#scrubDots");
     dotsWrap.innerHTML = "";
-    const tickEls = [];
-    if (tStart && tEnd) {
-      const t0 = new Date(tStart).getTime();
-      const t1 = new Date(tEnd).getTime();
-      let cur = Math.floor(t0 / stepMs) * stepMs;
+    const t0 = tStart ? new Date(tStart).getTime() : 0;
+    const t1 = tEnd ? new Date(tEnd).getTime() : 0;
+    const pxPerMs = duration > 0 ? stripW / duration : 0;
+
+    if (tStart && tEnd && duration > 0) {
+      // build ticks across [t0, t1] at minor resolution, classify each
+      let cur = Math.floor(t0 / minorMs) * minorMs;
       let guard = 0;
-      while (cur <= t1 && guard < 300) {
-        const x = ((cur - t0) / duration) * stripW;
+      while (cur <= t1 && guard < 2000) {
+        const x = (cur - t0) * pxPerMs;
+        const isMajor = (cur % stepMs) < minorMs / 2;
+        const isMid = !isMajor && (cur % midMs) < minorMs / 2;
         const tick = document.createElement("div");
-        tick.className = "scrub-dot";
+        tick.className = "scrub-dot" + (isMajor ? " major" : isMid ? " mid" : "");
         tick.style.left = `${x}px`;
         dotsWrap.appendChild(tick);
-        tickEls.push(tick);
-        // time label under major ticks (every other)
-        // label only on whole hours (or every tick if step >= 1h)
-        const isHour = cur % 3600000 === 0;
-        if (isHour || stepMs >= 3600000) {
+        if (isMajor) {
           const lab = document.createElement("span");
           lab.className = "scrub-timelabel";
           lab.style.left = `${x}px`;
-          lab.dataset.x = String(x);
           const d = new Date(cur);
           const hh = String(d.getHours()).padStart(2, "0");
           const mm = String(d.getMinutes()).padStart(2, "0");
-          lab.textContent = mm === "00" ? `${hh}:00` : `${hh}:${mm}`;
+          lab.textContent = `${hh}:${mm}`;
           dotsWrap.appendChild(lab);
         }
-        cur += stepMs;
+        cur += minorMs;
         guard++;
+      }
+
+      // event dots at every message timestamp (amber)
+      for (const m of s.messages) {
+        if (!m.timestamp) continue;
+        const x = (new Date(m.timestamp) - t0) * pxPerMs;
+        if (x < 0 || x > stripW) continue;
+        const ev = document.createElement("div");
+        ev.className = "scrub-ev";
+        ev.style.left = `${x}px`;
+        dotsWrap.appendChild(ev);
       }
     }
 
     // time → progress [0,1]
-    function timeToP(t) {
-      if (!duration) return 0;
-      return Math.max(0, Math.min(1, (new Date(t) - new Date(tStart)) / duration));
-    }
-    // progress → time string
     function pToTime(p) {
       if (!duration) return fmtFull(tStart);
-      return fmtFull(new Date(new Date(tStart).getTime() + p * duration).toISOString());
+      return fmtFull(new Date(t0 + p * duration).toISOString());
     }
 
     const setRange = (p) => {
-      rangeEl.textContent = pToTime(p);
-      tickEl.textContent = fmtShort(new Date(new Date(tStart).getTime() + p * duration).toISOString());
+      const d = new Date(t0 + p * duration);
+      rangeEl.textContent = fmtFull(d.toISOString());
+      tickEl.textContent = fmtClock(d.toISOString());
     };
 
     const rows = timeline.querySelectorAll(".msg");
@@ -462,13 +463,11 @@
 
     function applyPos(p) {
       p = Math.max(0, Math.min(1, p));
-      const trackWc = track.clientWidth;
-      const maxShift = Math.max(0, stripW - trackWc);
-      content.style.transform = `translateX(${(p * -maxShift).toFixed(1)}px)`;
+      // 完整刻度宽滚动：p=0 最早在中央，p=1 最晚在中央
+      content.style.transform = `translateX(${(-p * stripW).toFixed(1)}px)`;
       setRange(p);
     }
 
-    // scroll the chat by the message nearest to a given progress
     function scrollChatTo(p) {
       const max = chatScroll.scrollHeight - chatScroll.clientHeight;
       chatScroll.scrollTop = max * p;
@@ -489,68 +488,48 @@
     }
 
     let dragStarted = false;
-    let lastPX = 0, lastPTime = 0;
+    let startX = 0, startP = 0;
     let inertiaTimer = null;
     const DRAG_THRESHOLD = 4;
 
     track.addEventListener("pointerdown", (e) => {
       dragging = true;
       dragStarted = false;
-      lastPX = posFromEvent(e.clientX);
-      lastPTime = performance.now();
+      startX = e.clientX;
+      startP = progressOf();
       track.setPointerCapture(e.pointerId);
     });
     track.addEventListener("pointermove", (e) => {
       if (!dragging) return;
-      const p = posFromEvent(e.clientX);
+      const dx = e.clientX - startX;
       if (!dragStarted) {
-        if (Math.abs((p - lastPX) * track.clientWidth) < DRAG_THRESHOLD) return;
+        if (Math.abs(dx) < DRAG_THRESHOLD) return; // 点击不跳
         dragStarted = true;
         scrub.classList.add("dragging");
       }
-      const now = performance.now();
-      scrubToP(p);
-      if (now - lastPTime > 40) { lastPX = p; lastPTime = now; }
+      // 手指往左(dx<0) → 看更晚时间 → p 增大
+      const np = startP - dx / stripW;
+      scrubToP(np);
     });
     const endDrag = (e) => {
       dragging = false;
+      dragStarted = false;
       scrub.classList.remove("dragging");
-      if (!dragStarted) return;
-      if (!(e && typeof e.clientX === "number")) return;
-      const p = posFromEvent(e.clientX);
-      const dt = Math.max(performance.now() - lastPTime, 1);
-      const v = (p - lastPX) / dt;
-      if (Math.abs(v) > 0.0004) startInertia(v);
-      else scrubToP(p);
     };
-    function startInertia(v) {
-      if (inertiaTimer) cancelAnimationFrame(inertiaTimer);
-      let vel = v;
-      const step = () => {
-        if (!document.body.contains(content)) { inertiaTimer = null; return; }
-        vel *= 0.92;
-        if (Math.abs(vel) < 0.00001) { inertiaTimer = null; return; }
-        const cur = progressOf();
-        const np = Math.max(0, Math.min(1, cur + vel * 16));
-        applyPos(np);
-        scrollChatTo(np);
-        inertiaTimer = requestAnimationFrame(step);
-      };
-      inertiaTimer = requestAnimationFrame(step);
-    }
-    function progressOf() {
-      const max = chatScroll.scrollHeight - chatScroll.clientHeight;
-      return max > 0 ? chatScroll.scrollTop / max : 0;
-    }
     track.addEventListener("pointerup", endDrag);
     track.addEventListener("pointercancel", endDrag);
 
     const scrollHandler = () => { if (!dragging) applyPos(progressOf()); };
+    function progressOf() {
+      const max = chatScroll.scrollHeight - chatScroll.clientHeight;
+      return max > 0 ? chatScroll.scrollTop / max : 0;
+    }
     chatScroll.removeEventListener("scroll", scrollHandler);
     chatScroll.addEventListener("scroll", scrollHandler);
 
-    const startP = total ? progressOf() : 0;
-    applyPos(startP);
+    // 初始：最早时间对准中央指针
+    applyPos(0);
+    scrollChatTo(0);
   }
 
   /* ---------- session management ---------- */

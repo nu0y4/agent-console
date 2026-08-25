@@ -1,0 +1,280 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>时间轴 Demo — 中央指针 + 滚动刻度尺</title>
+<style>
+  :root {
+    --bg: oklch(0.985 0.006 215);
+    --elev: oklch(0.972 0.008 215);
+    --line: oklch(0.87 0.012 215);
+    --faint: oklch(0.645 0.015 220);
+    --dim: oklch(0.52 0.020 220);
+    --hi: oklch(0.21 0.030 220);
+    --teal: oklch(0.62 0.11 215);
+    --teal-deep: oklch(0.47 0.10 222);
+    --amber: oklch(0.72 0.13 68);
+    --mono: "JetBrains Mono", ui-monospace, Consolas, monospace;
+    --sans: -apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: var(--bg); color: var(--hi); font-family: var(--sans); padding: 48px 24px 80px; max-width: 980px; margin: 0 auto; }
+  h1 { font-size: 22px; margin-bottom: 4px; }
+  .sub { color: var(--dim); font-size: 13px; margin-bottom: 40px; }
+  .demo { margin-bottom: 48px; }
+  .demo h2 { font-size: 14px; margin-bottom: 3px; }
+  .demo .desc { font-size: 12px; color: var(--faint); margin-bottom: 12px; }
+  .stage { background: var(--elev); border: 1px solid var(--line); border-radius: 12px; padding: 22px 0 18px; overflow: hidden; }
+  .time-read { font-family: var(--mono); font-size: 13px; color: var(--teal-deep); text-align: center; margin-bottom: 10px; }
+
+  /* 轨道：中央指针固定，刻度尺在下方滚动 */
+  .axis { position: relative; height: 54px; cursor: grab; user-select: none; touch-action: none; }
+  .axis:active { cursor: grabbing; }
+  /* 中央指针，永远不动 */
+  .axis .marker { position: absolute; top: 0; bottom: 0; left: 50%; width: 2px; background: var(--teal); transform: translateX(-50%); pointer-events: none; z-index: 3; }
+  .axis .marker::after { content: ""; position: absolute; top: 0; left: 50%; transform: translateX(-50%); width: 9px; height: 9px; border-radius: 50%; background: var(--teal); border: 2px solid #fff; box-shadow: 0 1px 3px oklch(0.2 0.05 220 / 0.35); }
+  /* 刻度尺：左边缘固定在中央，向右延伸 */
+  .axis .strip { position: absolute; top: 0; bottom: 0; left: 50%; will-change: transform; }
+  .axis .baseline { position: absolute; top: 14px; left: 0; width: 100%; height: 1px; background: var(--line); }
+  .tick { position: absolute; top: 7px; width: 1px; height: 8px; background: var(--dim); }
+  .tick.mid { top: 5px; height: 12px; }
+  .tick.major { top: 3px; height: 16px; width: 1.5px; background: var(--faint); }
+  .tick-label { position: absolute; top: 24px; transform: translateX(-50%); font-family: var(--mono); font-size: 10px; color: var(--faint); white-space: nowrap; }
+  .ev-dot { position: absolute; top: 10px; width: 7px; height: 7px; border-radius: 50%; background: var(--amber); border: 1.5px solid #fff; transform: translateX(-50%); z-index: 1; }
+  .date-band { position: absolute; top: 0; bottom: 0; width: 1px; background: oklch(0.62 0.11 215 / 0.4); }
+  .date-label { position: absolute; top: 0; transform: translateX(-50%); font-size: 9px; color: var(--teal-deep); font-weight: 600; white-space: nowrap; }
+  .note { font-size: 11px; color: var(--faint); margin-top: 18px; line-height: 1.6; }
+  .note b { color: var(--teal-deep); }
+</style>
+</head>
+<body>
+  <h1>时间轴 Demo · 中央指针 + 滚动刻度尺</h1>
+  <p class="sub">指针固定在中央不动；打开时最早时间 00:00 顶在指针下，刻度只向右延伸；手指往左拖，刻度尺往左滚</p>
+
+  <!-- 1 标准 -->
+  <div class="demo">
+    <h2>① 标准刻度</h2>
+    <p class="desc">每小时一格，每 6 小时长刻度 + 整点标签</p>
+    <div class="stage"><div class="time-read" id="read1">00:00</div><div class="axis" id="axis1"><div class="baseline"></div><div class="strip" id="strip1"></div><div class="marker"></div></div></div>
+  </div>
+
+  <!-- 2 精密 -->
+  <div class="demo">
+    <h2>② 精密刻度</h2>
+    <p class="desc">15min 细 / 1h 中 / 6h 粗 三级刻度 + 整点标签</p>
+    <div class="stage"><div class="time-read" id="read2">00:00</div><div class="axis" id="axis2"><div class="baseline"></div><div class="strip" id="strip2"></div><div class="marker"></div></div></div>
+  </div>
+
+  <!-- 3 填充 -->
+  <div class="demo">
+    <h2>③ 已过去填充</h2>
+    <p class="desc">指针左侧（已过去）高亮，右侧（未来）灰</p>
+    <div class="stage"><div class="time-read" id="read3">00:00</div><div class="axis" id="axis3"><div class="baseline" id="baseline3"></div><div class="strip" id="strip3"></div><div class="marker"></div></div></div>
+  </div>
+
+  <!-- 4 日期分带 -->
+  <div class="demo">
+    <h2>④ 日期分带</h2>
+    <p class="desc">跨天显示日期分隔线 + 时间刻度</p>
+    <div class="stage"><div class="time-read" id="read4">00:00</div><div class="axis" id="axis4"><div class="baseline"></div><div class="strip" id="strip4"></div><div class="marker"></div></div></div>
+  </div>
+
+  <!-- 5 事件点 -->
+  <div class="demo">
+    <h2>⑤ 事件点叠加</h2>
+    <p class="desc">刻度 + 琥珀色事件点（消息位置）</p>
+    <div class="stage"><div class="time-read" id="read5">00:00</div><div class="axis" id="axis5"><div class="baseline"></div><div class="strip" id="strip5"></div><div class="marker"></div></div></div>
+  </div>
+
+  <div class="note">
+    <b>交互</b>：指针固定在中央，拖动刻度尺（往左拖 = 看更晚时间）。<br>
+    <b>对不准的根因已修</b>：滚动距离 = 完整刻度宽（不是"刻度宽 − 轨道宽"），所以拖到底时最晚时间正好停在指针下。
+  </div>
+
+<script>
+(function () {
+  const DAY = 24 * 3600 * 1000;
+  const fmt = (ms) => {
+    const h = Math.floor(ms / 3600000), m = Math.floor((ms % 3600000) / 60000);
+    return String(h).padStart(2, "0") + ":" + String(m).padStart(2, "0");
+  };
+  const pad = (n) => String(n).padStart(2, "0");
+
+  // 核心：中央指针固定，刻度尺跟随手指平移
+  // stripW = 刻度总宽，maxShift = stripW（完整），保证最晚时间能到中央
+  function makeAxis(id, { stripW, buildTicks, onMove }) {
+    const axis = document.getElementById(id);
+    const strip = document.getElementById("strip" + id.slice(-1));
+    const read = document.getElementById("read" + id.slice(-1));
+
+    strip.style.width = stripW + "px";
+    buildTicks(strip, stripW);
+
+    // 当前 p：0=最早在中央，1=最晚在中央
+    let p = 0;
+    function apply(np) {
+      p = Math.max(0, Math.min(1, np));
+      strip.style.transform = `translateX(${(-p * stripW).toFixed(1)}px)`;
+      read.textContent = fmt(p * DAY);
+      if (onMove) onMove(p);
+    }
+
+    // 拖动：手指位移 = 刻度尺位移（同向）
+    let dragging = false, startX = 0, startP = 0;
+    axis.addEventListener("pointerdown", (e) => {
+      dragging = true;
+      startX = e.clientX;
+      startP = p;
+      axis.setPointerCapture(e.pointerId);
+    });
+    axis.addEventListener("pointermove", (e) => {
+      if (!dragging) return;
+      const dx = e.clientX - startX;
+      const np = startP - dx / stripW; // 手指往左(dx<0)，p 增大，刻度尺往左
+      apply(np);
+    });
+    const end = () => { dragging = false; };
+    axis.addEventListener("pointerup", end);
+    axis.addEventListener("pointercancel", end);
+
+    apply(0); // 初始：最早时间在中央
+    return apply;
+  }
+
+  /* 1 标准：每小时一格 */
+  makeAxis("axis1", {
+    stripW: 24 * 64,
+    buildTicks: (strip, W) => {
+      for (let i = 0; i <= 24; i++) {
+        const major = i % 6 === 0;
+        const t = document.createElement("div");
+        t.className = "tick" + (major ? " major" : "");
+        t.style.left = (i * 64) + "px";
+        strip.appendChild(t);
+        if (major) {
+          const l = document.createElement("span");
+          l.className = "tick-label";
+          l.style.left = (i * 64) + "px";
+          l.textContent = pad(i) + ":00";
+          strip.appendChild(l);
+        }
+      }
+    }
+  });
+
+  /* 2 精密：15min/1h/6h */
+  makeAxis("axis2", {
+    stripW: 96 * 16,
+    buildTicks: (strip, W) => {
+      for (let i = 0; i <= 96; i++) {
+        const minute = i * 15;
+        const major = minute % 360 === 0;
+        const mid = !major && minute % 60 === 0;
+        const t = document.createElement("div");
+        t.className = "tick" + (major ? " major" : mid ? " mid" : "");
+        t.style.left = (i * 16) + "px";
+        strip.appendChild(t);
+        if (major) {
+          const l = document.createElement("span");
+          l.className = "tick-label";
+          l.style.left = (i * 16) + "px";
+          l.textContent = pad(Math.floor(minute / 60)) + ":00";
+          strip.appendChild(l);
+        }
+      }
+    }
+  });
+
+  /* 3 填充：指针左侧高亮 */
+  makeAxis("axis3", {
+    stripW: 24 * 64,
+    buildTicks: (strip, W) => {
+      for (let i = 0; i <= 24; i++) {
+        const major = i % 6 === 0;
+        const t = document.createElement("div");
+        t.className = "tick" + (major ? " major" : "");
+        t.style.left = (i * 64) + "px";
+        strip.appendChild(t);
+        if (major) {
+          const l = document.createElement("span");
+          l.className = "tick-label";
+          l.style.left = (i * 64) + "px";
+          l.textContent = pad(i) + ":00";
+          strip.appendChild(l);
+        }
+      }
+    },
+    onMove: (p) => {
+      // 指针左侧(中央左边)高亮已过去，右侧灰
+      const base = document.getElementById("baseline3");
+      base.style.background = `linear-gradient(90deg, var(--teal) 50%, var(--line) 50%)`;
+    }
+  });
+
+  /* 4 日期分带：两天 */
+  makeAxis("axis4", {
+    stripW: 48 * 48,
+    buildTicks: (strip, W) => {
+      for (let i = 0; i <= 48; i++) {
+        const major = i % 6 === 0;
+        const t = document.createElement("div");
+        t.className = "tick" + (major ? " major" : "");
+        t.style.left = (i * 48) + "px";
+        strip.appendChild(t);
+        if (major) {
+          const l = document.createElement("span");
+          l.className = "tick-label";
+          l.style.left = (i * 48) + "px";
+          l.textContent = pad(i % 24) + ":00";
+          strip.appendChild(l);
+        }
+      }
+      // 日期分隔在 24h 处
+      [0, 0.5].forEach((frac, idx) => {
+        const b = document.createElement("div");
+        b.className = "date-band";
+        b.style.left = (frac * W) + "px";
+        strip.appendChild(b);
+        const dl = document.createElement("span");
+        dl.className = "date-label";
+        dl.style.left = (frac * W) + "px";
+        dl.textContent = idx === 0 ? "8/23" : "8/24";
+        strip.appendChild(dl);
+      });
+    }
+  });
+
+  /* 5 精密刻度 + 事件点叠加 */
+  makeAxis("axis5", {
+    stripW: 96 * 16,
+    buildTicks: (strip, W) => {
+      for (let i = 0; i <= 96; i++) {
+        const minute = i * 15;
+        const major = minute % 360 === 0;
+        const mid = !major && minute % 60 === 0;
+        const t = document.createElement("div");
+        t.className = "tick" + (major ? " major" : mid ? " mid" : "");
+        t.style.left = (i * 16) + "px";
+        strip.appendChild(t);
+        if (major) {
+          const l = document.createElement("span");
+          l.className = "tick-label";
+          l.style.left = (i * 16) + "px";
+          l.textContent = pad(Math.floor(minute / 60)) + ":00";
+          strip.appendChild(l);
+        }
+      }
+      // 事件点（消息位置，琥珀色）
+      [0.03, 0.08, 0.15, 0.22, 0.31, 0.4, 0.5, 0.6, 0.71, 0.82, 0.9, 0.97].forEach((x) => {
+        const d = document.createElement("div");
+        d.className = "ev-dot";
+        d.style.left = (x * W) + "px";
+        strip.appendChild(d);
+      });
+    }
+  });
+})();
+</script>
+</body>
+</html>
