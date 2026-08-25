@@ -423,23 +423,28 @@ code, kbd, .mono { font-family: var(--mono); }
   pointer-events: none;
   white-space: nowrap;
 }
-/* fixed center marker + time label above it */
+/* fixed center marker: a small dot with a short stem above and below */
 .scrub-marker {
-  position: absolute; top: 0; bottom: 0; left: 50%;
-  width: 2px;
-  transform: translateX(-50%);
-  background: var(--teal);
-  border-radius: 1px;
-  pointer-events: none;
-}
-.scrub-marker::after {
-  content: ""; position: absolute; top: 50%; left: 50%;
-  width: 10px; height: 10px; border-radius: 50%;
+  position: absolute; top: 50%; left: 50%;
+  width: 10px; height: 10px;
   transform: translate(-50%, -50%);
+  border-radius: 50%;
   background: var(--teal);
   border: 2px solid var(--bg-elev-1);
   box-shadow: 0 1px 3px oklch(0.2 0.05 220 / 0.4);
+  pointer-events: none;
+  z-index: 3;
 }
+.scrub-marker::before,
+.scrub-marker::after {
+  content: ""; position: absolute; left: 50%;
+  width: 2px; height: 12px;
+  transform: translateX(-50%);
+  background: var(--teal);
+  border-radius: 1px;
+}
+.scrub-marker::before { top: calc(100% + 4px); }
+.scrub-marker::after { bottom: calc(100% + 4px); }
 .scrub-bubble {
   position: absolute;
   bottom: 100%;
