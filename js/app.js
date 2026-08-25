@@ -386,17 +386,17 @@
     startEl.textContent = tStart ? fmtFull(tStart) : "会话开始";
     endEl.textContent = tEnd ? fmtFull(tEnd) : "会话结束";
 
-    // pick a "major" step so there are 6–15 major ticks (hour boundaries)
+    // pick a "major" step so major ticks are finer-grained (more of them)
     function niceStep(ms) {
       const steps = [1000, 2000, 5000, 10000, 15000, 30000, 60000, 120000, 300000, 600000, 900000, 1800000, 3600000, 7200000, 10800000, 21600000, 43200000, 86400000];
-      for (const st of steps) if (ms / st <= 15) return st;
+      for (const st of steps) if (ms / st <= 30) return st;
       return steps[steps.length - 1];
     }
     const stepMs = duration > 0 ? niceStep(duration) : 30000;
     const minorMs = stepMs / 4;   // 细刻度
     const midMs = stepMs / 2;     // 中刻度
 
-    const pxPerMajor = 80;
+    const pxPerMajor = 160;  // 拉长时间轴：每个 major 刻度间隔更宽
     const stripW = duration > 0 ? Math.round((duration / stepMs) * pxPerMajor) : 1200;
     content.style.width = stripW + "px";
 
@@ -431,7 +431,8 @@
           const d = new Date(cur);
           const hh = String(d.getHours()).padStart(2, "0");
           const mm = String(d.getMinutes()).padStart(2, "0");
-          lab.textContent = `${hh}:${mm}`;
+          const ss = String(d.getSeconds()).padStart(2, "0");
+          lab.textContent = `${hh}:${mm}:${ss}`;
           dotsWrap.appendChild(lab);
         }
         cur += minorMs;
@@ -453,13 +454,13 @@
     // time → progress [0,1]
     function pToTime(p) {
       if (!duration) return fmtFull(tStart);
-      return fmtFull(new Date(t0 + p * duration).toISOString());
+      return fmtFull(new Date(t0 + p * duration));
     }
 
     const setRange = (p) => {
       const d = new Date(t0 + p * duration);
-      rangeEl.textContent = fmtFull(d.toISOString());
-      tickEl.textContent = fmtClock(d.toISOString());
+      rangeEl.textContent = fmtFull(d);
+      tickEl.textContent = fmtClock(d);
     };
 
     const rows = timeline.querySelectorAll(".msg");
