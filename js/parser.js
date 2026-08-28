@@ -245,4 +245,9 @@ const SessionParser = (() => {
   return { parse };
 })();
 
-window.SessionParser = SessionParser;
+// 双端兼容：浏览器挂 window，Node 挂 module.exports
+if (typeof module !== "undefined" && module.exports) {
+  module.exports = SessionParser;
+} else if (typeof window !== "undefined") {
+  window.SessionParser = SessionParser;
+}

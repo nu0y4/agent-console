@@ -12,6 +12,7 @@
 const http = require("http");
 const fs = require("fs");
 const path = require("path");
+const { parse: parseSession } = require("./js/parser.js");
 
 const ROOT = __dirname;
 const CONFIG_FILE = path.join(ROOT, "config.json");
@@ -62,6 +63,52 @@ function readBody(req) {
     req.on("end", () => resolve(data));
     req.on("error", reject);
   });
+}
+
+/* validate a session file path: inside configured dir, .jsonl, exists.
+   Returns { ok, file?, error? } */
+function resolveSessionFile(raw) {
+  if (!raw) return { ok: false, error: "missing file" };
+  const cfg = readConfig();
+  const dir = path.normalize(cfg.sessionDir);
+  const target = path.normalize(raw);
+  if (target !== dir && !target.startsWith(dir + path.sep)) return { ok: false, error: "outside dir" };
+  if (!/\.(jsonl|ndjson)$/i.test(target)) return { ok: false, error: "not a session file" };
+  if (!fs.existsSync(target)) return { ok: false, error: "not found" };
+  return { ok: true, file: target };
+}
+
+/* format a parsed session as plain text (mirrors the frontend export) */
+function formatSessionTxt(parsed, name) {
+  const fmtT = (t) => {
+    const d = new Date(t);
+    if (isNaN(d)) return "";
+    const p = (n) => String(n).padStart(2, "0");
+    return `${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
+  };
+  const lines = [];
+  lines.push(`===== 会话：${parsed.title} =====`);
+  if (parsed.sessionId) lines.push(`sessionId: ${parsed.sessionId}`);
+  lines.push(`文件：${(name || "").replace(/\.jsonl$/i, "")}`);
+  lines.push("");
+  for (const m of parsed.messages) {
+    if (m.kind === "user") {
+      lines.push(`[${fmtT(m.timestamp)}]用户：${m.text}`);
+    } else if (m.kind === "assistant") {
+      const parts = [];
+      for (const b of (m.blocks || [])) {
+        if (b.kind === "thinking" && b.text) parts.push(`<thinking>${b.text}</thinking>`);
+        else if (b.kind === "text" && b.text) parts.push(b.text);
+        else if (b.kind === "tool_use") {
+          let input = "";
+          try { input = JSON.stringify(b.input, null, 2); } catch (e) { input = String(b.input); }
+          parts.push(`<tool>${b.name}${input ? "\n" + input : ""}</tool>`);
+        }
+      }
+      if (parts.length) lines.push(`[${fmtT(m.timestamp)}]AI：${parts.join("\n")}`);
+    }
+  }
+  return lines.join("\n");
 }
 
 /* read the head of a session file to extract a title (ai-title row, or the
@@ -239,6 +286,89 @@ const server = http.createServer(async (req, res) => {
         })
         .sort((a, b) => b.mtime - a.mtime);
       return sendJson(res, 200, { q, count: hits.length, sessions: hits });
+    }
+
+    /* --- parse: structured session content (messages/blocks/stats) --- */
+    if (p === "/api/sessions/parse") {
+      const r = resolveSessionFile(url.searchParams.get("file"));
+      if (!r.ok) return sendJson(res, 400, { error: r.error });
+      try {
+        const raw = fs.readFileSync(r.file, "utf8");
+        const parsed = parseSession(raw, path.basename(r.file));
+        return sendJson(res, 200, parsed);
+      } catch (e) {
+        return sendJson(res, 500, { error: String(e && e.message || e) });
+      }
+    }
+
+    /* --- export: session as plain text (same format as frontend export) --- */
+    if (p === "/api/sessions/export") {
+      const r = resolveSessionFile(url.searchParams.get("file"));
+      if (!r.ok) return sendJson(res, 400, { error: r.error });
+      try {
+        const raw = fs.readFileSync(r.file, "utf8");
+        const parsed = parseSession(raw, path.basename(r.file));
+        const text = formatSessionTxt(parsed, path.basename(r.file));
+        const fname = path.basename(r.file).replace(/\.(jsonl|ndjson)$/i, "") + ".txt";
+        res.writeHead(200, {
+          "Content-Type": "text/plain; charset=utf-8",
+          "Content-Disposition": `attachment; filename="${fname}"`,
+        });
+        return res.end(text);
+      } catch (e) {
+        return sendJson(res, 500, { error: String(e && e.message || e) });
+      }
+    }
+
+    /* --- stats: global aggregates across all sessions --- */
+    if (p === "/api/stats") {
+      const cfg = readConfig();
+      const sessions = scanSessions(cfg.sessionDir);
+      let toolCalls = 0, aiMsgs = 0, userMsgs = 0, thinkingBlocks = 0;
+      const byDay = {};
+      for (const s of sessions) {
+        if (!s.lastTs) continue;
+        const day = String(s.lastTs).slice(0, 10);
+        byDay[day] = (byDay[day] || 0) + 1;
+        try {
+          const raw = fs.readFileSync(s.file, "utf8");
+          const parsed = parseSession(raw, s.name);
+          toolCalls += parsed.stats.tool;
+          aiMsgs += parsed.stats.ai;
+          userMsgs += parsed.stats.user;
+          thinkingBlocks += parsed.stats.thinking;
+        } catch (e) {}
+      }
+      return sendJson(res, 200, {
+        sessionCount: sessions.length,
+        messageCount: aiMsgs + userMsgs,
+        aiMessages: aiMsgs,
+        userMessages: userMsgs,
+        toolCalls,
+        thinkingBlocks,
+        sessionsByDay: byDay,
+      });
+    }
+
+    /* --- API documentation --- */
+    if (p === "/api") {
+      return sendJson(res, 200, {
+        name: "agent-console API",
+        version: "1.0",
+        base: `http://${HOST}:${PORT}`,
+        endpoints: [
+          { method: "GET", path: "/api/config", desc: "读取配置（会话文件夹）" },
+          { method: "POST", path: "/api/config", desc: "保存配置", body: "{ sessionDir, sessionId }" },
+          { method: "GET", path: "/api/sessions", desc: "会话列表（按结束时间倒序）", params: "" },
+          { method: "GET", path: "/api/sessions/raw?file=", desc: "会话原文 jsonl" },
+          { method: "GET", path: "/api/sessions/parse?file=", desc: "结构化解析结果（messages/blocks/stats）" },
+          { method: "GET", path: "/api/sessions/export?file=", desc: "导出会话为纯文本 txt" },
+          { method: "DELETE", path: "/api/sessions?file=", desc: "删除会话文件" },
+          { method: "GET", path: "/api/search?q=", desc: "全文搜索（ripgrep）" },
+          { method: "GET", path: "/api/stats", desc: "全局统计（消息/工具/按日分布）" },
+          { method: "GET", path: "/api", desc: "本 API 文档" },
+        ],
+      });
     }
 
     /* --- static --- */

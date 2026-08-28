@@ -1164,23 +1164,26 @@
     renderSidebar();
     renderChat();
     const cachedCounts = { hit: 0, miss: 0 };
-    await Promise.all(data.sessions.map(async (item) => {
-      const rec = {
-        id: "s" + (++seq),
-        file: item.name,
-        backendFile: item.file,
-        folder: item.folder || "",
-        title: item.title || item.name.replace(/\.jsonl$/i, ""),
-        sessionId: item.sessionId,
-        mtime: item.mtime,
-        lastTs: item.lastTs || "",
-        loaded: false,
-        _loading: false,
-      };
+    // 先按后端顺序建好数组（后端已按 lastTs 倒序），再并发填充缓存，
+    // 保证 sessions 顺序 = 后端排序，不被缓存读取的完成顺序打乱
+    const recs = data.sessions.map((item) => ({
+      id: "s" + (++seq),
+      file: item.name,
+      backendFile: item.file,
+      folder: item.folder || "",
+      title: item.title || item.name.replace(/\.jsonl$/i, ""),
+      sessionId: item.sessionId,
+      mtime: item.mtime,
+      lastTs: item.lastTs || "",
+      loaded: false,
+      _loading: false,
+    }));
+    sessions = recs;
+    await Promise.all(recs.map(async (rec) => {
       // restore from cache when the cached mtime matches the current file
       try {
-        const cached = await SessionCache.get(item.file);
-        if (cached && cached.mtime === item.mtime) {
+        const cached = await SessionCache.get(rec.backendFile);
+        if (cached && cached.mtime === rec.mtime) {
           Object.assign(rec, {
             messages: cached.messages,
             stats: cached.stats,
@@ -1197,7 +1200,6 @@
       } catch (e) {
         cachedCounts.miss++;
       }
-      sessions.push(rec);
     }));
     renderSidebar();
     if (sessions.length) selectSession(sessions[0].id);
@@ -1403,6 +1405,39 @@
   $("#settingsCancel").addEventListener("click", closeSettings);
   $("#settingsSave").addEventListener("click", saveSettings);
   settingsRoot.addEventListener("click", (e) => { if (e.target === settingsRoot) closeSettings(); });
+
+  /* ---------- API 说明弹窗 ---------- */
+  const apiRoot = $("#apiRoot");
+  function openApiDoc() {
+    const list = $("#apiList");
+    const baseEl = $("#apiBase");
+    list.innerHTML = '<div class="sr-empty"><div class="big">…</div><div>加载中</div></div>';
+    baseEl.textContent = "";
+    apiRoot.hidden = false;
+    fetch("/api")
+      .then((r) => r.json())
+      .then((doc) => {
+        baseEl.textContent = "base: " + (doc.base || location.origin);
+        list.innerHTML = "";
+        (doc.endpoints || []).forEach((e) => {
+          const item = document.createElement("div");
+          item.className = "api-item";
+          item.innerHTML =
+            `<span class="m ${e.method}">${escapeHtml(e.method)}</span>` +
+            `<span class="p">${escapeHtml(e.path)}</span>` +
+            `<span class="d">${escapeHtml(e.desc || "")}</span>`;
+          list.appendChild(item);
+        });
+      })
+      .catch(() => {
+        list.innerHTML = '<div class="sr-empty"><div class="big">✕</div><div>后端不可达</div></div>';
+      });
+  }
+  function closeApiDoc() { apiRoot.hidden = true; }
+  $("#apiBtn").addEventListener("click", openApiDoc);
+  $("#apiClose").addEventListener("click", closeApiDoc);
+  $("#apiDone").addEventListener("click", closeApiDoc);
+  apiRoot.addEventListener("click", (e) => { if (e.target === apiRoot) closeApiDoc(); });
 
   /* ---------- init ---------- */
   renderSidebar();
