@@ -56,12 +56,12 @@
   }
 
   function sessionTimeLabel(s) {
-    // 列表按 mtime(文件最后活动) 倒序，显示也用 mtime，保持顺序与时间一致
+    // 优先用会话真实结束时间(lastTs)，缺失时回退 mtime
+    if (s.lastTs) {
+      return `${fmtDate(s.lastTs)} ${fmtClock(s.lastTs)}`;
+    }
     if (s.mtime) {
       return `${fmtDate(s.mtime)} ${fmtClock(s.mtime)}`;
-    }
-    if (s.firstTs && s.lastTs) {
-      return `${fmtDate(s.lastTs)} ${fmtClock(s.lastTs)}`;
     }
     return "—";
   }
@@ -1173,6 +1173,7 @@
         title: item.title || item.name.replace(/\.jsonl$/i, ""),
         sessionId: item.sessionId,
         mtime: item.mtime,
+        lastTs: item.lastTs || "",
         loaded: false,
         _loading: false,
       };

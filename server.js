@@ -86,6 +86,28 @@ function sessionTitle(file) {
   return "";
 }
 
+/* read the tail of a session file to extract the LAST message timestamp —
+   the session's true end time. Cheap: only reads the last 64 KB. */
+function sessionLastTs(file) {
+  try {
+    const fd = fs.openSync(file, "r");
+    const size = fs.fstatSync(fd).size;
+    const len = Math.min(size, 64 * 1024);
+    const buf = Buffer.alloc(len);
+    fs.readSync(fd, buf, 0, len, size - len);
+    fs.closeSync(fd);
+    const tail = buf.toString("utf8", 0, len);
+    let last = null;
+    for (const line of tail.split("\n")) {
+      let o;
+      try { o = JSON.parse(line); } catch (e) { continue; }
+      if (o && typeof o.timestamp === "string" && o.timestamp) last = o.timestamp;
+    }
+    return last || "";
+  } catch (e) {}
+  return "";
+}
+
 /* recursively collect .jsonl files under a dir, newest first */
 function scanSessions(dir) {
   const out = [];
@@ -112,12 +134,18 @@ function scanSessions(dir) {
         out.push({
           sessionId, file: p, name: ent.name, mtime, folder,
           title: sessionTitle(p),
+          lastTs: sessionLastTs(p),
         });
       }
     }
   };
   walk(dir, 0);
-  out.sort((a, b) => b.mtime - a.mtime);
+  // sort by session end time (lastTs) — mtime is only a fallback
+  out.sort((a, b) => {
+    const at = a.lastTs ? new Date(a.lastTs).getTime() : a.mtime;
+    const bt = b.lastTs ? new Date(b.lastTs).getTime() : b.mtime;
+    return bt - at;
+  });
   return out;
 }
 
