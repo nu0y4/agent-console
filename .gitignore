@@ -1,3 +1,10 @@
 # 本地配置（含本机路径，不入库）
 config.json
 *.log
+
+# 会话统计缓存：本机绝对路径 + 每次扫描重建，不入库
+session-index.json
+session-index.json.tmp
+
+# dsh 会话解压出来的 sidecar（数百 MB，可随时删，会按需重建）
+.dsh-cache/

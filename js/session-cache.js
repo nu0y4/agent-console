@@ -42,6 +42,17 @@ const SessionCache = (() => {
     }));
   }
 
+  // wipe every parsed session. Used once when CACHE_VER changes: the cache is
+  // keyed by version, so bumping it orphans the old records — and the old
+  // full-preload may have left hundreds of MB of them behind.
+  function clear() {
+    return open().then(() => new Promise((resolve, reject) => {
+      const r = tx(STORE, "readwrite").clear();
+      r.onsuccess = () => resolve();
+      r.onerror = () => reject(r.error);
+    }));
+  }
+
   // store scan metadata (mtime snapshot) so we can diff later
   function putMeta(val) {
     return open().then(() => new Promise((resolve, reject) => {
@@ -58,7 +69,7 @@ const SessionCache = (() => {
     }));
   }
 
-  return { get, put, putMeta, getMeta };
+  return { get, put, clear, putMeta, getMeta };
 })();
 
 window.SessionCache = SessionCache;

@@ -1,17 +1,51 @@
 /* ============================================================
    Agent Console — application logic
-   State: sessions (loaded + parsed), selectedId, search index
+   State: sessions (metadata up front, content loaded on demand), selectedId
+
+   Sessions are NOT preloaded. The folder holds 500 MB+ of transcripts (the
+   largest is 116 MB), and eagerly fetching them all cost more than the entire
+   rest of the app. The list endpoint carries each session's title and message
+   counts from the server's own index, so the sidebar is fully populated without
+   a single transcript crossing the wire — content arrives only when you open a
+   session, or when a search needs it.
    ============================================================ */
 (function () {
   "use strict";
-  const { escapeHtml, normalize, tokenize, highlight, snippet } = window.Highlighter;
+  const { escapeHtml, normalize, tokenize, highlight } = window.Highlighter;
   const { parse } = window.SessionParser;
 
   /* ---------- state ---------- */
   let sessions = [];          // { id, file, title, firstTs, lastTs, stats, messages }
   let selectedId = null;
-  let index = [];             // flat search entries { sid, midx, bidx, kind, title, text }
   let seq = 0;
+
+  // Bump when the parser or the zcode→JSONL bridge changes shape. The cache is
+  // otherwise validated on mtime alone, so a format change with an unchanged
+  // source file would otherwise serve a stale parse forever. Also bumped to 3
+  // when the preload went away: it drops the hundreds of MB of records that the
+  // old full-preload left in IndexedDB.
+  const CACHE_VER = 3;
+  const cacheKey = (rec) => `${CACHE_VER}|${rec.backendFile}`;
+
+  // Above this the parsed record is bigger than any cache is worth: a 116 MB
+  // source parses to ~37 MB, and writing one of those into IndexedDB is slower
+  // than re-fetching it and can blow the storage quota.
+  const MAX_CACHE_SOURCE_BYTES = 4 * 1024 * 1024;
+
+  /* ---------- session sources (Claude Code files | zcode SQLite) ---------- */
+  const SRC_KEY = "agent-console.sources";
+  const ALL_SOURCES = ["claude", "zcode", "dsh"];
+  let sources = new Set(ALL_SOURCES);
+  try {
+    const saved = JSON.parse(localStorage.getItem(SRC_KEY) || "null");
+    if (Array.isArray(saved)) {
+      const kept = saved.filter((s) => ALL_SOURCES.includes(s));
+      if (kept.length) sources = new Set(kept);
+    }
+  } catch (e) {}
+  let zcodeAvailable = true;
+  let dshAvailable = true;
+  const sourcesParam = () => Array.from(sources).join(",");
 
   /* ---------- DOM refs ---------- */
   const $ = (sel) => document.querySelector(sel);
@@ -80,15 +114,19 @@
     title.innerHTML = escapeHtml(s.title);
     const pill = document.createElement("span");
     pill.className = "pill";
-    pill.textContent = s.loaded ? " · " + (s.stats ? s.stats.total : 0) + " 条" : " · …";
+    // the server ships stats with the list for zcode, so we can show a real
+    // count before the transcript is ever fetched
+    pill.textContent = (s.loaded || s.stats) ? " · " + (s.stats ? s.stats.total : 0) + " 条" : " · …";
     title.appendChild(pill);
 
     const meta = document.createElement("div");
     meta.className = "si-meta";
-    const idFull = (s.file || "").replace(/\.jsonl$/i, "");
+    // strip the routing prefix / extension so the chip shows a bare session id
+    const idFull = (s.file || "").replace(/^[a-z]+::/, "").replace(/\.jsonl$/i, "");
     meta.innerHTML =
       `<span class="mono">${escapeHtml(sessionTimeLabel(s))}</span>` +
       `<span class="dot"></span>` +
+      sourceBadge(s) +
       `<span class="si-tag" title="${escapeHtml(idFull)}">${escapeHtml(idFull)}</span>`;
 
     const counts = document.createElement("div");
@@ -100,19 +138,75 @@
     if (stat && stat.tool) parts.push(`<span>${miniSvg("tool")} ${stat.tool}</span>`);
     counts.innerHTML = parts.join("");
 
-    const del = document.createElement("button");
-    del.className = "si-del";
-    del.textContent = "✕";
-    del.title = "删除该会话";
-    del.addEventListener("click", (e) => {
-      e.stopPropagation();
-      removeSession(s.id);
-    });
-
-    li.append(title, meta, counts, del);
+    li.append(title, meta, counts);
+    // zcode sessions live in the zcode app's own database — this console is a
+    // read-only observer of it, so no delete affordance at all
+    if (s.deletable !== false) {
+      const del = document.createElement("button");
+      del.className = "si-del";
+      del.textContent = "✕";
+      del.title = "删除该会话";
+      del.addEventListener("click", (e) => {
+        e.stopPropagation();
+        removeSession(s.id);
+      });
+      li.appendChild(del);
+    }
     li.addEventListener("click", () => selectSession(s.id));
     return li;
   }
+
+  // source tag for non-default backends; '' for claude keeps rows clean
+  function sourceBadge(s) {
+    if (!s.source || s.source === "claude") return "";
+    return `<span class="src-badge src-${escapeHtml(s.source)}">${escapeHtml(s.source)}</span>`;
+  }
+
+  // what you'd paste to get back into this conversation
+  function resumeHint(s) {
+    if (!s.sessionId) return "";
+    // neither zcode nor dsh has a CLI on PATH here that takes a session id
+    if (s.source === "zcode" || s.source === "dsh") return s.sessionId;
+    return `claude --resume ${s.sessionId}`;
+  }
+
+  /* ---------- source switch ---------- */
+  const srcSwitch = $("#srcSwitch");
+
+  function syncSourceSwitch() {
+    srcSwitch.querySelectorAll(".src-opt").forEach((b) => {
+      const on = sources.has(b.dataset.source);
+      b.classList.toggle("on", on);
+      const unavailable = (b.dataset.source === "zcode" && !zcodeAvailable)
+        || (b.dataset.source === "dsh" && !dshAvailable);
+      b.disabled = unavailable;
+      b.title = unavailable
+        ? (b.dataset.source === "dsh" ? "dsh 会话目录不可用，请在配置里检查数据目录" : "zcode 数据库不可用，请在配置里检查数据目录")
+        : b.dataset.source === "claude"
+          ? "Claude Code 的 .jsonl 会话"
+          : b.dataset.source === "dsh"
+            ? "dsh（DeepSeek Harness）的 zstd 会话（只读）"
+            : "zcode 的 SQLite 会话（只读）";
+    });
+  }
+
+  function toggleSource(name) {
+    if (!ALL_SOURCES.includes(name)) return;
+    if (sources.has(name)) {
+      // an empty set renders "还没有会话", which would be a lie — keep one on
+      if (sources.size === 1) return;
+      sources.delete(name);
+    } else {
+      sources.add(name);
+    }
+    try { localStorage.setItem(SRC_KEY, JSON.stringify(Array.from(sources))); } catch (e) {}
+    syncSourceSwitch();
+    loadAllFromBackend();
+  }
+
+  srcSwitch.querySelectorAll(".src-opt").forEach((b) => {
+    b.addEventListener("click", () => toggleSource(b.dataset.source));
+  });
 
   const collapsedFolders = new Set();
 
@@ -172,6 +266,24 @@
   }
 
   /* ---------- rendering: timeline ---------- */
+  // 折叠正文延迟到展开时才生成。
+  // 这些 <pre> 默认 max-height:0，屏幕上根本看不见，但每个都要参与布局，而且
+  // 生成前得先 JSON.stringify 再转义。一个 1.8 万条的会话里有 7000+ 个工具调用
+  // 和 6000+ 个思考块 —— 每次 renderChat 都在为看不见的内容做几千次字符串拼接。
+  // 实测这一项占了大转录渲染耗时的大头，而折叠着的东西本来就没人看。
+  function bindCollapsible(wrap, headSel, fill) {
+    const head = wrap.querySelector(headSel);
+    if (!head) return;
+    let filled = false;
+    // 搜索结果跳转直接展开时走这条路，不经过 click
+    wrap._fill = () => { if (filled) return; filled = true; fill(); };
+    head.addEventListener("click", () => {
+      if (wrap.classList.contains("open")) { wrap.classList.remove("open"); return; }
+      wrap._fill();
+      wrap.classList.add("open");
+    });
+  }
+
   function blockEl(block, idx, searchQuery) {
     const hl = (t) => (searchQuery ? highlight(t, searchQuery) : escapeHtml(t));
     const wrap = document.createElement("div");
@@ -192,29 +304,32 @@
         `<div class="thinking-head"><span class="tw">▾</span>${title}` +
         `<span class="status">${escapeHtml(block.text.split("\n").length)} 行</span></div>` +
         `<div class="thinking-body"><pre></pre></div>`;
-      wrap.querySelector("pre").innerHTML = hl(block.text);
-      wrap.querySelector(".thinking-head").addEventListener("click", () => wrap.classList.toggle("open"));
+      bindCollapsible(wrap, ".thinking-head", () => {
+        wrap.querySelector(".thinking-body pre").innerHTML = hl(block.text);
+      });
       return wrap;
     }
 
     if (block.kind === "tool_use") {
       wrap.className = "tool-block";
-      let inputJson = "";
-      try { inputJson = JSON.stringify(block.input, null, 2); } catch (e) { inputJson = String(block.input); }
+      const hasResult = block.result != null;
       wrap.innerHTML =
         `<div class="tool-head"><span class="tool-ic">${toolIcon(block.name)}</span>` +
         `<span class="tool-name">${escapeHtml(block.name)}</span>` +
         `<span class="tool-tag">tool</span>` +
         `<span class="tw">›</span></div>` +
         `<div class="tool-input"><pre></pre></div>` +
-        (block.result != null
+        (hasResult
           ? `<div class="tool-result"><div class="tr-label ${block.result.is_error ? "tr-err" : "tr-ok"}">` +
             `${block.result.is_error ? "error" : "result"}${block.result.summary ? " · " + escapeHtml(block.result.summary) : ""}</div>` +
             `<pre></pre></div>`
           : "");
-      wrap.querySelector(".tool-input pre").innerHTML = hl(inputJson);
-      if (block.result) wrap.querySelector(".tool-result pre").innerHTML = hl(block.result.content);
-      wrap.querySelector(".tool-head").addEventListener("click", () => wrap.classList.toggle("open"));
+      bindCollapsible(wrap, ".tool-head", () => {
+        let inputJson = "";
+        try { inputJson = JSON.stringify(block.input, null, 2); } catch (e) { inputJson = String(block.input); }
+        wrap.querySelector(".tool-input pre").innerHTML = hl(inputJson);
+        if (hasResult) wrap.querySelector(".tool-result pre").innerHTML = hl(block.result.content);
+      });
       return wrap;
     }
 
@@ -260,15 +375,6 @@
     }
     return Array.from(types);
   }
-  // 主类型（用于着色/分类）：优先级 tool > thinking > ai > user
-  function primaryType(m) {
-    const t = messageTypes(m);
-    if (t.includes("tool")) return "tool";
-    if (t.includes("thinking")) return "thinking";
-    if (t.includes("ai")) return "ai";
-    if (t.includes("user")) return "user";
-    return "system";
-  }
 
   function showLoading(text) {
     timeline.innerHTML = "";
@@ -276,7 +382,7 @@
     chatMeta.textContent = "";
     $("#chatId").hidden = true;
     $("#cidFile").textContent = "";
-    $("#scrub").hidden = true;
+    $("#turnRail").hidden = true;
     chatEmpty.style.display = "flex";
     chatEmpty.innerHTML =
       `<div class="empty-ring spin"></div>` +
@@ -289,6 +395,7 @@
 
   function renderChat(targetMsgId) {
     timeline.innerHTML = "";
+    syncToolbar();
     if (chatEmptyHTML === null) chatEmptyHTML = chatEmpty.innerHTML;
     chatEmpty.style.display = "none";
     const s = sessions.find((x) => x.id === selectedId);
@@ -299,7 +406,7 @@
       chatEmpty.style.display = "flex";
       $("#chatId").hidden = true;
       $("#cidFile").textContent = "";
-      $("#scrub").hidden = true;
+      $("#turnRail").hidden = true;
       $("#msgFilter").hidden = true;
       return;
     }
@@ -316,7 +423,7 @@
         `<p class="dim">${escapeHtml(s._loading ? "拉取并解析完整内容…" : "单击以加载完整内容")}</p>`;
       $("#chatId").hidden = true;
       $("#cidFile").textContent = "";
-      $("#scrub").hidden = true;
+      $("#turnRail").hidden = true;
       if (!s._loading) loadSession(s);
       return;
     }
@@ -332,15 +439,21 @@
     const cidFile = $("#cidFile");
     const cidCmd = $("#cidCmd");
     if (s.sessionId) {
+      const hint = resumeHint(s);
       chatId.hidden = false;
-      cidFile.textContent = (s.file || "").replace(/\.jsonl$/i, "");
+      cidFile.textContent = (s.file || "").replace(/^[a-z]+::/, "").replace(/\.jsonl$/i, "");
       cidFile.title = s.file || "";
-      cidCmd.textContent = `claude --resume ${s.sessionId}`;
-      cidCmd.title = `claude --resume ${s.sessionId}`;
+      cidCmd.textContent = hint;
+      cidCmd.title = hint;
     } else {
       chatId.hidden = true;
       cidFile.textContent = "";
     }
+
+    // Every render rebuilds this subtree from scratch, so the rise animation
+    // would replay on every row. Past a few hundred messages that's thousands of
+    // concurrent animations — drop them and the render is markedly cheaper.
+    timeline.classList.toggle("no-anim", s.messages.length > 300);
 
     const frag = document.createDocumentFragment();
     const filter = msgFilterType; // "all" | "user" | "tool" | "ai" | "thinking"
@@ -404,7 +517,7 @@
       frag.appendChild(row);
     });
     timeline.appendChild(frag);
-    initScrub(s);
+    initTurnRail(s);
     // 定位到指定消息（从筛选模式点击回来）
     if (targetMsgId != null) {
       const target = timeline.querySelector(`[data-msgid="${targetMsgId}"]`);
@@ -419,181 +532,169 @@
     }
   }
 
-  /* ---------- timeline scrubber ---------- */
-  // Maps chat scroll progress (0..1) to a scrub position and a message index,
-  // both directions: dragging scrubs the chat, scrolling the chat moves the thumb.
-  function initScrub(s) {
-    const scrub = $("#scrub");
-    const track = $("#scrubTrack");
-    const content = $("#scrubContent");
-    const bubble = $("#scrubBubble");
-    const tickEl = $("#scrubTick");
-    const startEl = $("#scrubStart");
-    const endEl = $("#scrubEnd");
-    const rangeEl = $("#scrubRange");
-    scrub.hidden = false;
+  /* ---------- 右侧轮次刻度栏 ---------- */
+  // 一根刻度 = 一条用户消息（"人说话"的节点，会话天然的分章位置）。
+  //
+  // 布局模型照搬 dsh 的 TurnNavigator：**定距 10px 一行**，刻度条固定 20×2，
+  // 只用 scaleX 从右端伸缩表示状态。因为每行等高、每条同基准，纵向天然整齐；
+  // 之前那版按真实像素偏移等比排、还各画各的宽度，密处叠成一坨、疏处空一大截。
+  // 代价是超出封顶高度后要在轨道内滚动（dsh 也是如此），换来的是规整。
+  //
+  // 刻度数与消息数无关，只等于"轮数"：1.8 万条消息的会话也只有 200 多行。
+  const RAIL_SPACING = 10;   // TURN_SPACING_PX
+  const RAIL_INSET = 6;      // RAIL_INSET_PX
+  const RAIL_FADE = 24;      // FADE_PX
+  let railScrollHandler = null;   // 模块级引用，重渲染时先摘掉旧的监听
 
-    // ---- real time axis ----
-    const times = s.messages.map((m) => m.timestamp).filter(Boolean).sort();
-    const tStart = times.length ? times[0] : null;
-    const tEnd = times.length ? times[times.length - 1] : null;
-    const duration = (tStart && tEnd) ? (new Date(tEnd) - new Date(tStart)) : 0;
+  function initTurnRail(s) {
+    const rail = $("#turnRail");
+    const frame = $("#railFrame");
+    const scroller = $("#railScroller");
+    const track = $("#railTrack");
+    const preview = $("#railPreview");
+    const promptEl = $("#railPrompt");
+    const responseEl = $("#railResponse");
+    track.replaceChildren();
+    preview.hidden = true;
 
-    const fmtFull = (t) => (t ? `${fmtDate(t)} ${fmtClock(t)}` : "—");
-    startEl.textContent = tStart ? fmtFull(tStart) : "会话开始";
-    endEl.textContent = tEnd ? fmtFull(tEnd) : "会话结束";
-
-    // pick a "major" step so major ticks are finer-grained (more of them)
-    function niceStep(ms) {
-      const steps = [1000, 2000, 5000, 10000, 15000, 30000, 60000, 120000, 300000, 600000, 900000, 1800000, 3600000, 7200000, 10800000, 21600000, 43200000, 86400000];
-      for (const st of steps) if (ms / st <= 30) return st;
-      return steps[steps.length - 1];
+    const turns = [];
+    for (const row of timeline.querySelectorAll(".msg")) {
+      const types = row.dataset.types || "";
+      if (types.indexOf("user") < 0) continue;
+      turns.push({ mi: Number(row.dataset.msgid), row, el: null });
     }
-    const stepMs = duration > 0 ? niceStep(duration) : 30000;
-    const minorMs = stepMs / 4;   // 细刻度
-    const midMs = stepMs / 2;     // 中刻度
+    if (!turns.length) { rail.hidden = true; return; }
+    rail.hidden = false;
+    // 让开原生滚动条，否则轨道的点击区会盖住它的拖拽
+    frame.style.right = `${(chatScroll.offsetWidth - chatScroll.clientWidth) + 12}px`;
+    // 封顶高度在这里算成具体像素再交给滚动区。dsh 是在 CSS 里用
+    // max-height:inherit 配一个由 var 算出的**长度**；写成百分比的话
+    // 父元素高度又是被内容撑开的，解析不出来，轨道就一路撑到 2000+px。
+    scroller.style.maxHeight = `${Math.min(420, Math.max(80, chatScroll.clientHeight - 64))}px`;
 
-    const pxPerMajor = 160;  // 拉长时间轴：每个 major 刻度间隔更宽
-    const stripW = duration > 0 ? Math.round((duration / stepMs) * pxPerMajor) : 1200;
-    content.style.width = stripW + "px";
+    // 定距铺开：第 i 行在 RAIL_INSET + i*RAIL_SPACING（dsh 的 paddingStart
+    // 是 RAIL_INSET - RAIL_SPACING/2，加上半行高正好落在这个值上）
+    const topOf = (i) => RAIL_INSET - RAIL_SPACING / 2 + i * RAIL_SPACING;
+    const frag = document.createDocumentFragment();
+    for (let i = 0; i < turns.length; i++) {
+      const el = document.createElement("button");
+      el.type = "button";
+      el.className = "rail-mark";
+      el.style.top = `${topOf(i)}px`;
+      el.dataset.turn = i;
+      frag.appendChild(el);
+      turns[i].el = el;
+    }
+    track.appendChild(frag);
+    track.style.height = `${topOf(Math.max(0, turns.length - 1)) + RAIL_SPACING / 2 + RAIL_INSET}px`;
 
-    const dotsWrap = $("#scrubDots");
-    dotsWrap.innerHTML = "";
-    const t0 = tStart ? new Date(tStart).getTime() : 0;
-    const t1 = tEnd ? new Date(tEnd).getTime() : 0;
-    const pxPerMs = duration > 0 ? stripW / duration : 0;
+    /* ---- 滚动位置 ↔ 轮次 ---- */
+    // 这一版按行高反推：第 i 行对应内容的 (i+0.5)/n 处。定距轨道无法表达
+    // 每轮真实占多少像素，但相邻轮次的对齐误差被限制在半行以内，够用。
+    function activeFromScroll() {
+      const max = chatScroll.scrollHeight - chatScroll.clientHeight;
+      const p = max > 0 ? chatScroll.scrollTop / max : 0;
+      setActive(Math.min(turns.length - 1, Math.max(0, Math.round(p * (turns.length - 1)))));
+    }
+    let activeIdx = -1;
+    function setActive(i) {
+      if (i === activeIdx) return;
+      if (activeIdx >= 0) turns[activeIdx].el.classList.remove("active");
+      activeIdx = i;
+      turns[activeIdx].el.classList.add("active");
+      followActive();
+    }
+    // 把当前轮的那一行滚到轨道正中；鼠标在轨道上时不抢滚动条 ——
+    // 否则手刚移过去就被"跟随"推走（dsh 的 pointerInsideRef 就是这个意思）
+    function followActive() {
+      if (pointerInside) return;
+      const h = scroller.clientHeight;
+      if (h <= 0) return;
+      const max = scroller.scrollHeight - h;
+      if (max <= 0) return;
+      const target = Math.max(0, Math.min(max, topOf(activeIdx) + RAIL_SPACING / 2 - h / 2));
+      scroller.scrollTop = target;
+    }
+    function syncFade() {
+      const max = scroller.scrollHeight - scroller.clientHeight;
+      scroller.classList.toggle("rail-fade-top", max > 0 && scroller.scrollTop > 2);
+      scroller.classList.toggle("rail-fade-bottom", max > 0 && scroller.scrollTop < max - 2);
+    }
+    scroller.addEventListener("scroll", syncFade);
 
-    if (tStart && tEnd && duration > 0) {
-      // origin = earliest whole major-step boundary (so the first major tick
-      // lands exactly at x=0, flush under the marker — no left gap)
-      const origin = Math.floor(t0 / stepMs) * stepMs;
-      const span = t1 - origin; // may be slightly longer than duration
-      const px = stripW / span;
+    /* ---- 交互 ---- */
+    function scrollToTurn(i) {
+      const t = turns[i];
+      if (!t) return;
+      const tlTop = timeline.getBoundingClientRect().top;
+      const offset = t.row.getBoundingClientRect().top - tlTop;
+      chatScroll.scrollTop = Math.max(0, offset - 12);
+    }
 
-      // ticks: minor resolution from origin to t1
-      let cur = origin;
-      let guard = 0;
-      while (cur <= t1 && guard < 2000) {
-        const x = (cur - origin) * px;
-        const isMajor = Math.abs(cur % stepMs) < minorMs / 2;
-        const isMid = !isMajor && Math.abs(cur % midMs) < minorMs / 2;
-        const tick = document.createElement("div");
-        tick.className = "scrub-dot" + (isMajor ? " major" : isMid ? " mid" : "");
-        tick.style.left = `${x}px`;
-        dotsWrap.appendChild(tick);
-        if (isMajor) {
-          const lab = document.createElement("span");
-          lab.className = "scrub-timelabel";
-          lab.style.left = `${x}px`;
-          const d = new Date(cur);
-          const hh = String(d.getHours()).padStart(2, "0");
-          const mm = String(d.getMinutes()).padStart(2, "0");
-          const ss = String(d.getSeconds()).padStart(2, "0");
-          lab.textContent = `${hh}:${mm}:${ss}`;
-          dotsWrap.appendChild(lab);
+    let pointerInside = false;
+    let previewIdx = -1;
+    function showPreview(i) {
+      if (i === previewIdx) return;
+      previewIdx = i;
+      const t = turns[i];
+      if (!t) { preview.hidden = true; return; }
+      const msg = s.messages[t.mi] || {};
+      const text = String(msg.text || "").replace(/\s+/g, " ").trim();
+      promptEl.textContent = text || "（无文本）";
+      // 这一轮的 AI 回复：往后找第一条 assistant 文本
+      let reply = "";
+      for (let k = t.mi + 1; k < s.messages.length; k++) {
+        const m = s.messages[k];
+        if (m.kind === "user") break;
+        if (m.kind === "assistant") {
+          const blk = (m.blocks || []).find((b) => b.kind === "text" && b.text);
+          if (blk) { reply = String(blk.text).replace(/\s+/g, " ").trim(); break; }
         }
-        cur += minorMs;
-        guard++;
       }
-
-      // event dots at every message timestamp, colored by type
-      for (const m of s.messages) {
-        if (!m.timestamp) continue;
-        const x = (new Date(m.timestamp) - origin) * px;
-        if (x < 0 || x > stripW) continue;
-        const ev = document.createElement("div");
-        ev.className = "scrub-ev ev-" + primaryType(m);
-        ev.style.left = `${x}px`;
-        dotsWrap.appendChild(ev);
-      }
+      responseEl.textContent = reply || "";
+      responseEl.hidden = !reply;
+      // 贴在光标那一行的旁边，且不越出轨道上下端
+      const h = frame.clientHeight;
+      const rowTop = topOf(i) + RAIL_SPACING / 2 - scroller.scrollTop;
+      const ph = Math.min(100, frame.clientHeight);
+      preview.style.top = `${Math.max(0, Math.min(h - ph, rowTop - ph / 2))}px`;
+      preview.hidden = false;
+      if (previewIdx >= 0 && turns[previewIdx]) turns[previewIdx].el.classList.remove("preview");
+      t.el.classList.add("preview");
+    }
+    function hidePreview() {
+      preview.hidden = true;
+      if (previewIdx >= 0 && turns[previewIdx]) turns[previewIdx].el.classList.remove("preview");
+      previewIdx = -1;
     }
 
-    // time → progress [0,1]
-    function pToTime(p) {
-      if (!duration) return fmtFull(tStart);
-      return fmtFull(new Date(t0 + p * duration));
-    }
-
-    const setRange = (p) => {
-      const d = new Date(t0 + p * duration);
-      rangeEl.textContent = fmtFull(d);
-      tickEl.textContent = fmtClock(d);
-    };
-
-    const rows = timeline.querySelectorAll(".msg");
-    const total = rows.length;
-    let dragging = false;
-    const setBubble = (label) => { bubble.textContent = label; };
-
-    function applyPos(p) {
-      p = Math.max(0, Math.min(1, p));
-      // 完整刻度宽滚动：p=0 最早在中央，p=1 最晚在中央
-      content.style.transform = `translateX(${(-p * stripW).toFixed(1)}px)`;
-      setRange(p);
-    }
-
-    function scrollChatTo(p) {
-      const max = chatScroll.scrollHeight - chatScroll.clientHeight;
-      chatScroll.scrollTop = max * p;
-    }
-
-    function scrubToP(p) {
-      p = Math.max(0, Math.min(1, p));
-      applyPos(p);
-      scrollChatTo(p);
-      const idx = Math.min(total - 1, Math.max(0, Math.round(p * (total - 1))));
-      const row = rows[idx];
-      if (row) setBubble(`#${Number(row.dataset.msgid) + 1} ${pToTime(p)}`);
-    }
-
-    function posFromEvent(clientX) {
-      const r = track.getBoundingClientRect();
-      return (clientX - r.left) / r.width;
-    }
-
-    let dragStarted = false;
-    let startX = 0, startP = 0;
-    let inertiaTimer = null;
-    const DRAG_THRESHOLD = 4;
-
-    track.addEventListener("pointerdown", (e) => {
-      dragging = true;
-      dragStarted = false;
-      startX = e.clientX;
-      startP = progressOf();
-      track.setPointerCapture(e.pointerId);
+    frame.addEventListener("pointerenter", () => { pointerInside = true; });
+    frame.addEventListener("pointerleave", () => { pointerInside = false; hidePreview(); });
+    // 悬停出预览（用事件委托，200 多个按钮不各挂一个监听）
+    track.addEventListener("pointerover", (e) => {
+      const el = e.target.closest(".rail-mark");
+      if (el) showPreview(Number(el.dataset.turn));
     });
-    track.addEventListener("pointermove", (e) => {
-      if (!dragging) return;
-      const dx = e.clientX - startX;
-      if (!dragStarted) {
-        if (Math.abs(dx) < DRAG_THRESHOLD) return; // 点击不跳
-        dragStarted = true;
-        scrub.classList.add("dragging");
-      }
-      // 手指往左(dx<0) → 看更晚时间 → p 增大
-      const np = startP - dx / stripW;
-      scrubToP(np);
+    track.addEventListener("click", (e) => {
+      const el = e.target.closest(".rail-mark");
+      if (el) scrollToTurn(Number(el.dataset.turn));
     });
-    const endDrag = (e) => {
-      dragging = false;
-      dragStarted = false;
-      scrub.classList.remove("dragging");
+
+    // 合并到每帧一次；只切两个 class，不读 scrollHeight 再写样式
+    let raf = 0;
+    const onScroll = () => {
+      if (raf) return;
+      raf = requestAnimationFrame(() => { raf = 0; activeFromScroll(); });
     };
-    track.addEventListener("pointerup", endDrag);
-    track.addEventListener("pointercancel", endDrag);
+    // 摘掉上一轮渲染挂上去的监听（旧代码传新匿名函数给 removeEventListener，
+    // 等于从没摘掉过，每渲染一次就多积一个）
+    if (railScrollHandler) chatScroll.removeEventListener("scroll", railScrollHandler);
+    railScrollHandler = onScroll;
+    chatScroll.addEventListener("scroll", onScroll);
 
-    const scrollHandler = () => { if (!dragging) applyPos(progressOf()); };
-    function progressOf() {
-      const max = chatScroll.scrollHeight - chatScroll.clientHeight;
-      return max > 0 ? chatScroll.scrollTop / max : 0;
-    }
-    chatScroll.removeEventListener("scroll", scrollHandler);
-    chatScroll.addEventListener("scroll", scrollHandler);
-
-    // 初始：最早时间对准中央指针
-    applyPos(0);
-    scrollChatTo(0);
+    activeFromScroll();
+    // 首次把当前轮滚到正中，并同步遮罩状态
+    requestAnimationFrame(() => { followActive(); syncFade(); });
   }
 
   /* ---------- session management ---------- */
@@ -640,62 +741,41 @@
     });
   }
 
-  /* ---------- search index ---------- */
-  function buildIndex() {
-    index = [];
-    sessions.forEach((s) => {
-      if (!s.loaded) return; // only index parsed sessions
-      s.messages.forEach((m, mi) => {
-        if (m.kind === "user") {
-          index.push({ sid: s.id, midx: mi, bidx: -1, kind: "user", title: "用户 · " + s.title, text: m.text });
-        } else if (m.kind === "assistant") {
-          m.blocks.forEach((b, bi) => {
-            if (b.kind === "text") {
-              index.push({ sid: s.id, midx: mi, bidx: bi, kind: "ai", title: "AI 回复 · " + s.title, text: b.text });
-            } else if (b.kind === "thinking") {
-              index.push({ sid: s.id, midx: mi, bidx: bi, kind: "thinking", title: "思考 · " + s.title, text: b.text });
-            } else if (b.kind === "tool_use") {
-              let inputJson = "";
-              try { inputJson = JSON.stringify(b.input); } catch (e) {}
-              index.push({
-                sid: s.id, midx: mi, bidx: bi, kind: "tool",
-                title: `工具 ${b.name} · ` + s.title,
-                text: `${b.name}\n${inputJson}\n${b.result ? b.result.content : ""}`,
-              });
-            }
-          });
-        }
-      });
-    });
-  }
-
+  /* ---------- search ---------- */
   // rg-backed search: the backend greps the whole session folder and returns
-  // matching files; results render immediately (not gated on the preload).
+  // matching files; results render immediately.
   let searchSeq = 0;
   async function runSearch(query, filter) {
     const q = query.trim();
     if (!q) return [];
     const seq = ++searchSeq;
-    const res = await fetch(`/api/search?q=${encodeURIComponent(q)}`).catch(() => null);
+    const res = await fetch(
+      `/api/search?q=${encodeURIComponent(q)}&source=${encodeURIComponent(sourcesParam())}`
+    ).catch(() => null);
     if (!res || !res.ok) return [];
     const data = await res.json().catch(() => null);
     if (!data || !data.sessions) return [];
     if (seq !== searchSeq) return []; // superseded by a newer keystroke
 
-    // keep it fast: only sniff the matched files for the type filter
-    const items = filter === "all" ? data.sessions : [];
-    if (filter !== "all") {
+    // The type filter can only be applied to sessions already parsed in memory.
+    // It used to fetch + parse every unloaded hit — harmless while the preload
+    // kept everything in memory, but with on-demand loading that turns one
+    // keystroke into a sequential download of dozens of transcripts, the 116 MB
+    // one included. So: verify what we hold, and pass the rest through as
+    // unverified file-level hits (flagged, so the UI doesn't claim a type match).
+    const items = [];
+    if (filter === "all") {
+      items.push(...data.sessions);
+    } else {
+      const byFile = new Map();
+      for (const s of sessions) if (s.backendFile) byFile.set(s.backendFile, s);
       for (const item of data.sessions) {
-        const existing = sessions.find((x) => x.backendFile === item.file);
+        const existing = byFile.get(item.file);
         if (existing && existing.loaded) {
           if (sessionMatches(existing, q, filter)) items.push(item);
-          continue;
+        } else {
+          items.push(Object.assign({ typeUnverified: true }, item));
         }
-        try {
-          const raw = await fetch(`/api/sessions/raw?file=${encodeURIComponent(item.file)}`).then((r) => r.text());
-          const parsed = parse(raw, item.name);
-          if (sessionMatches({ messages: parsed.messages }, q, filter)) items.push(item);
-        } catch (e) {}
         if (items.length > 200) break;
       }
     }
@@ -704,6 +784,7 @@
       backendFile: item.file,
       title: item.title || item.file,
       folder: item.folder || "",
+      typeUnverified: !!item.typeUnverified,
     }));
   }
 
@@ -727,7 +808,6 @@
 
   /* ---------- search panel ---------- */
   function openSearch() {
-    buildIndex();
     searchPanel.hidden = false;
     if (searchInput.value) {
       // keep existing query; just refresh results
@@ -787,8 +867,13 @@
         btn.className = "sr-item" + (ri === selIdx ? " sel" : "");
         btn.dataset.ri = ri;
         const s = sessions.find((x) => x.backendFile === r.backendFile);
+        const typeLabel = r.typeUnverified
+          ? "会话 · 未校验类型"
+          : activeFilter === "all"
+            ? "会话"
+            : { tool: "工具调用", ai: "AI 对话", user: "用户对话", thinking: "思考过程" }[activeFilter] || "会话";
         btn.innerHTML =
-          `<div class="sr-title">${escapeHtml(r.title)} <span class="si-tag">${activeFilter === "all" ? "会话" : { tool: "工具调用", ai: "AI 对话", user: "用户对话", thinking: "思考过程" }[activeFilter] || "会话"}</span></div>` +
+          `<div class="sr-title">${escapeHtml(r.title)} <span class="si-tag">${typeLabel}</span></div>` +
           `<div class="sr-meta"><span class="mono">${escapeHtml(s ? sessionTimeLabel(s) : "")}</span>` +
           `<span>· ${escapeHtml(r.folder || "根目录")}</span></div>`;
         btn.addEventListener("click", () => jumpToResult(ri));
@@ -814,7 +899,9 @@
     if (r.bidx >= 0) {
       const blk = row.querySelector(`[data-bidx="${r.bidx}"]`);
       if (blk) target = blk;
-      if (blk && blk.classList.contains("tool-block") && blk.querySelector(".tool-input")) {
+      // 折叠正文是懒生成的，从搜索结果跳进来要先把内容补上再展开
+      if (blk && blk.classList.contains("tool-block")) {
+        if (blk._fill) blk._fill();
         blk.classList.add("open");
       }
     }
@@ -912,7 +999,8 @@
     const lines = [];
     lines.push(`===== 会话：${s.title} =====`);
     if (s.sessionId) lines.push(`sessionId: ${s.sessionId}`);
-    lines.push(`文件：${(s.file || "").replace(/\.jsonl$/i, "")}`);
+    lines.push(`来源：${s.source === "zcode" ? "zcode" : "Claude Code"}`);
+    lines.push(`文件：${(s.file || "").replace(/^[a-z]+::/, "").replace(/\.jsonl$/i, "")}`);
     lines.push("");
 
     for (const m of s.messages) {
@@ -950,7 +1038,7 @@
     const blob = new Blob([text], { type: "text/plain;charset=utf-8" });
     const a = document.createElement("a");
     a.href = URL.createObjectURL(blob);
-    a.download = `${(s.file || "session").replace(/\.jsonl$/i, "")}.txt`;
+    a.download = `${(s.file || "session").replace(/^[a-z]+::/, "").replace(/\.jsonl$/i, "")}.txt`;
     document.body.appendChild(a);
     a.click();
     setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 300);
@@ -985,11 +1073,12 @@
   function currentMsgIndex() {
     // 当前滚动位置对应的第一条可见消息
     const rows = timeline.querySelectorAll(".msg");
+    // 提到循环外：写在条件里会每行重读一次布局
+    const foldTop = chatScroll.getBoundingClientRect().top + 50;
     let best = null;
     for (const r of rows) {
-      if (r.getBoundingClientRect().top < chatScroll.getBoundingClientRect().top + 50) {
-        best = r;
-      } else break;
+      if (r.getBoundingClientRect().top < foldTop) best = r;
+      else break;
     }
     return best ? Number(best.dataset.msgid) : -1;
   }
@@ -1053,17 +1142,33 @@
     if (searchPanel.hidden) return;
     if (!searchWrap.contains(e.target)) closeSearch();
   });
+  // Reflect the current selection on the toolbar buttons. Deleting a zcode
+  // session is not on the table — it lives in the zcode app's own database —
+  // so the button is disabled rather than allowed to fail with a 400.
+  function syncToolbar() {
+    const s = sessions.find((x) => x.id === selectedId);
+    const canDelete = !!s && !!s.backendFile && s.deletable !== false;
+    delBtn.disabled = !canDelete;
+    delBtn.title = !s
+      ? "删除当前会话文件"
+      : s.deletable === false
+        ? (s.source === "dsh" ? "dsh 会话为只读" : "zcode 会话为只读，请在 zcode 应用中删除")
+        : !s.backendFile
+          ? "手动导入的会话不在磁盘上，无法删除"
+          : "删除当前会话文件";
+  }
+
   // delete the current session's file (no confirm)
   delBtn.addEventListener("click", async () => {
     const s = sessions.find((x) => x.id === selectedId);
-    if (!s || !s.backendFile) return;
+    if (!s || !s.backendFile || s.deletable === false) return;
     const prev = sessions[sessions.indexOf(s) - 1] || sessions[sessions.indexOf(s) + 1] || null;
     try {
       const res = await fetch(`/api/sessions?file=${encodeURIComponent(s.backendFile)}`, { method: "DELETE" });
       if (!res.ok) { alert("删除失败"); return; }
     } catch (e) { alert("后端不可达"); return; }
     // drop from cache + list
-    try { await SessionCache.put(s.backendFile, null); } catch (e) {}
+    try { await SessionCache.put(cacheKey(s), null); } catch (e) {}
     sessions = sessions.filter((x) => x.id !== s.id);
     selectedId = prev ? prev.id : null;
     renderSidebar();
@@ -1140,6 +1245,19 @@
   }
 
   /* ---------- backend sync ---------- */
+  // Entries are keyed `${CACHE_VER}|${file}`, so a version bump orphans every
+  // old record rather than reusing it. Purge them once, or the orphans sit in
+  // IndexedDB taking up space forever — which matters here, because the old
+  // full-preload could have written hundreds of MB.
+  async function initCache() {
+    try {
+      const meta = await SessionCache.getMeta();
+      if (meta && meta.cacheVer === CACHE_VER) return;
+      await SessionCache.clear();
+      await SessionCache.putMeta(Object.assign({}, meta, { cacheVer: CACHE_VER }));
+    } catch (e) {}
+  }
+
   const backendAvailable = () => {
     return new Promise((resolve) => {
       fetch("/api/config")
@@ -1152,13 +1270,25 @@
   // sessions restore instantly; the rest load in the background.
   async function loadAllFromBackend() {
     showLoading("正在加载会话…");
+    // keep local drag-dropped imports: they have no backendFile and are not
+    // governed by the source switch (which scopes *backends*, not imports)
+    const localOnly = sessions.filter((s) => !s.backendFile);
+    const prevSelected = (sessions.find((s) => s.id === selectedId) || {}).backendFile || null;
+
     let res;
     try {
-      res = await fetch("/api/sessions");
+      res = await fetch(`/api/sessions?source=${encodeURIComponent(sourcesParam())}`);
       if (!res.ok) return 0;
     } catch (e) { return 0; }
     const data = await res.json().catch(() => null);
     if (!data || !data.sessions) return 0;
+
+    if (typeof data.zcodeAvailable === "boolean" || typeof data.dshAvailable === "boolean") {
+      if (typeof data.zcodeAvailable === "boolean") zcodeAvailable = data.zcodeAvailable;
+      if (typeof data.dshAvailable === "boolean") dshAvailable = data.dshAvailable;
+      syncSourceSwitch();
+    }
+
     sessions = [];
     selectedId = null;
     renderSidebar();
@@ -1174,15 +1304,19 @@
       title: item.title || item.name.replace(/\.jsonl$/i, ""),
       sessionId: item.sessionId,
       mtime: item.mtime,
+      size: item.size || 0,
       lastTs: item.lastTs || "",
+      source: item.source || "claude",
+      deletable: item.deletable !== false,
+      stats: item.stats || null,
       loaded: false,
       _loading: false,
     }));
-    sessions = recs;
+    sessions = recs.concat(localOnly);
     await Promise.all(recs.map(async (rec) => {
       // restore from cache when the cached mtime matches the current file
       try {
-        const cached = await SessionCache.get(rec.backendFile);
+        const cached = await SessionCache.get(cacheKey(rec));
         if (cached && cached.mtime === rec.mtime) {
           Object.assign(rec, {
             messages: cached.messages,
@@ -1202,11 +1336,11 @@
       }
     }));
     renderSidebar();
-    if (sessions.length) selectSession(sessions[0].id);
-    // background fill for the ones we didn't have cached
-    if (cachedCounts.miss) {
-      preloadAll();
-    }
+    showStatsProgress(data.statsPending);
+    // keep the user on the same conversation across a source toggle
+    const again = prevSelected && sessions.find((s) => s.backendFile === prevSelected);
+    if (again) selectSession(again.id);
+    else if (sessions.length) selectSession(sessions[0].id);
     return sessions.length;
   }
 
@@ -1237,82 +1371,79 @@
     }
     s.loaded = true;
     s._loading = false;
-    // persist for next visit — fire-and-forget, never block the UI
+    // persist for next visit — fire-and-forget, never block the UI.
+    // Skipped for big files: a 116 MB transcript parses to ~37 MB of objects,
+    // which is slower to write than to re-fetch and can blow the storage quota.
     try {
-      SessionCache.put(s.backendFile, {
-        mtime: s.mtime,
-        messages: s.messages,
-        stats: s.stats,
-        title: s.title,
-        firstTs: s.firstTs,
-        lastTs: s.lastTs,
-        sessionId: s.sessionId,
-      }).catch(() => {});
+      if (!s.size || s.size <= MAX_CACHE_SOURCE_BYTES) {
+        SessionCache.put(cacheKey(s), {
+          mtime: s.mtime,
+          messages: s.messages,
+          stats: s.stats,
+          title: s.title,
+          firstTs: s.firstTs,
+          lastTs: s.lastTs,
+          sessionId: s.sessionId,
+        }).catch(() => {});
+      }
     } catch (e) {}
     if (silent) return;
     renderChat();
     renderSidebar();
-    if (!searchPanel.hidden) {
-      buildIndex();
-      renderSearch();
-    }
+    if (!searchPanel.hidden) renderSearch();
   }
 
-  // Background preload: fills in every not-yet-loaded session in chunks so the
-  // UI stays responsive while the sidebar counts fill up.
+  // Progress readout for the server's background stats pass. The message counts
+  // arrive asynchronously (see the poll's stats branch below), so this reports
+  // how many sessions are still uncounted rather than showing nothing at all.
   const loadProgressEl = $("#loadProgress");
-  let preloadToken = 0;
-  function preloadAll() {
-    const token = ++preloadToken;
-    const queue = sessions.filter((s) => !s.loaded && !s._loading);
-    if (!queue.length) return;
+  function showStatsProgress(pending) {
+    if (!pending) { loadProgressEl.hidden = true; loadProgressEl.textContent = ""; return; }
     loadProgressEl.hidden = false;
-    let done = 0;
-    const total = queue.length;
-    // one at a time + a yield between parses keeps the main thread free so
-    // clicks stay responsive while 400+ sessions fill in.
-    const CHUNK = 1;
-    let step = () => {};
-    step = async () => {
-      if (token !== preloadToken) return; // superseded
-      const slice = queue.slice(done, done + CHUNK);
-      if (!slice.length) {
-        loadProgressEl.hidden = true;
-        renderSidebar();
-        buildIndex();
-        return;
-      }
-      const target = slice[0];
-      // if it's already being loaded (e.g. by a click), skip without counting —
-      // it'll finish via that other caller and re-render the sidebar
-      if (target._loading || target.loaded) {
-        done++;
-        loadProgressEl.textContent = `${done}/${total}`;
-        setTimeout(step, 4);
-        return;
-      }
-      await loadSession(target, true);
-      done += slice.length;
-      loadProgressEl.textContent = `${done}/${total}`;
-      setTimeout(step, 4);
-    };
-    step();
+    loadProgressEl.textContent = `统计补齐中 · 剩 ${pending}`;
   }
 
-  // Poll the backend for new/changed sessions and load the deltas incrementally.
+  // Poll the backend for new/changed sessions. It deliberately does NOT pull
+  // transcripts any more: the list carries titles and counts, and content is
+  // fetched only for a session the user is actually looking at.
   let pollTimer = null;
+
+  // Watching a session that Claude Code is writing means re-fetching it on every
+  // mtime change, and that cost scales with the file. Small transcripts are cheap
+  // enough to re-read every tick; a big one is throttled, or watching a long
+  // session would pull tens of MB a minute.
+  const LIVE_FULL_REFRESH_MAX = 8 * 1024 * 1024;
+  const LIVE_BIG_TICKS = 8;   // ~1 min at the 8 s poll interval
+  let liveBigTick = 0;
+  function liveRefreshDue(rec) {
+    if ((rec.size || 0) <= LIVE_FULL_REFRESH_MAX) return true;
+    return (++liveBigTick % LIVE_BIG_TICKS) === 0;
+  }
+
   function startPolling() {
     if (pollTimer) return;
     pollTimer = setInterval(async () => {
       try {
-        const res = await fetch("/api/sessions");
+        // must carry the source filter, or a deselected zcode session would
+        // look brand-new on every tick and be unshifted straight back in
+        const res = await fetch(`/api/sessions?source=${encodeURIComponent(sourcesParam())}`);
         if (!res.ok) return;
         const data = await res.json();
         if (!data || !data.sessions) return;
-        const byFile = new Map(data.sessions.map((s) => [s.file, s]));
+        if ((typeof data.zcodeAvailable === "boolean" && data.zcodeAvailable !== zcodeAvailable) ||
+            (typeof data.dshAvailable === "boolean" && data.dshAvailable !== dshAvailable)) {
+          if (typeof data.zcodeAvailable === "boolean") zcodeAvailable = data.zcodeAvailable;
+          if (typeof data.dshAvailable === "boolean") dshAvailable = data.dshAvailable;
+          syncSourceSwitch();
+        }
+        showStatsProgress(data.statsPending);
+        // one lookup table per tick rather than an O(n) scan per item
+        const byFile = new Map();
+        for (const s of sessions) if (s.backendFile) byFile.set(s.backendFile, s);
+
         let changed = false;
         for (const item of data.sessions) {
-          const existing = sessions.find((x) => x.backendFile === item.file);
+          const existing = byFile.get(item.file);
           if (!existing) {
             // brand-new session file appeared
             const rec = {
@@ -1323,27 +1454,54 @@
               title: item.title || item.name.replace(/\.jsonl$/i, ""),
               sessionId: item.sessionId,
               mtime: item.mtime,
+              size: item.size,
+              lastTs: item.lastTs || "",
+              source: item.source || "claude",
+              deletable: item.deletable !== false,
+              stats: item.stats || null,
               loaded: false,
               _loading: false,
             };
             sessions.unshift(rec);
+            byFile.set(item.file, rec);
             changed = true;
-            loadSession(rec, true);
+            // No loadSession() here on purpose. This used to fetch every new
+            // session in full, and a brand-new session can be 100 MB+ — firing
+            // that download from a background tick is exactly the cost we set
+            // out to remove. It loads when clicked.
           } else if (existing.mtime !== item.mtime) {
-            // file changed on disk → refresh content
+            // the file changed on disk
             existing.mtime = item.mtime;
-            existing.loaded = false;
+            existing.size = item.size;
+            if (existing.stats == null && item.stats) existing.stats = item.stats;
             changed = true;
-            const wasSelected = selectedId === existing.id;
-            loadSession(existing, true).then(() => {
-              // if the user is looking at this session, repaint the chat too
-              if (wasSelected) renderChat();
-            });
+            // Re-read it only if the user is actually watching it — that's the
+            // session Claude Code is writing right now, and keeping it live is
+            // the point of this app. The other 68 just take the new timestamp.
+            //
+            // Re-reading means re-downloading the whole file, which is nothing
+            // for a 1 MB transcript and untenable for a 100 MB one that's still
+            // being appended to — so big live sessions refresh on a slower beat.
+            // When throttled we leave `loaded` alone: the currently displayed
+            // content stays valid, just briefly behind.
+            if (existing.id === selectedId && liveRefreshDue(existing)) {
+              existing.loaded = false;
+              loadSession(existing, true).then(() => {
+                if (selectedId === existing.id) renderChat();
+              });
+            }
+          } else if (existing.stats == null && item.stats) {
+            // Counts can arrive without the file changing: the server's stats
+            // worker fills them in after the fact. This is the branch that
+            // actually paints the sidebar's "N 条" column, so without it those
+            // rows would sit on "· …" until their mtime happened to change.
+            existing.stats = item.stats;
+            changed = true;
           }
         }
         if (changed) {
           renderSidebar();
-          if (!searchPanel.hidden) { buildIndex(); renderSearch(); }
+          if (!searchPanel.hidden) renderSearch();
         }
       } catch (e) {}
     }, 8000);
@@ -1352,6 +1510,10 @@
   /* ---------- settings modal ---------- */
   const settingsRoot = $("#settingsRoot");
   const settingsDir = $("#settingsDir");
+  const settingsZcodeDir = $("#settingsZcodeDir");
+  const settingsZcodeHint = $("#zcodeHint");
+  const settingsDshDir = $("#settingsDshDir");
+  const settingsDshHint = $("#dshHint");
   const settingsId = $("#settingsId");
   const settingsStatus = $("#settingsStatus");
   let settingsBusy = false;
@@ -1363,7 +1525,17 @@
       .then((r) => r.json())
       .then((cfg) => {
         settingsDir.value = cfg.sessionDir || "";
+        settingsZcodeDir.value = cfg.zcodeDir || "";
+        if (settingsDshDir) settingsDshDir.value = cfg.dshDir || "";
         settingsId.value = cfg.sessionId || "";
+        if (cfg.zcodeAvailable === false) {
+          settingsZcodeHint.textContent = "该目录下没有找到 db/db.sqlite，zcode 来源将不可用";
+        }
+        if (settingsDshHint) {
+          settingsDshHint.textContent = cfg.dshAvailable === false
+            ? "该目录下没有找到 sessions/，dsh 来源将不可用"
+            : "指向 dsh 配置目录，内含 sessions/（只读，不写入）";
+        }
       })
       .catch(() => {
         settingsStatus.textContent = "后端不可达，仅可手动导入";
@@ -1385,13 +1557,24 @@
       const res = await fetch("/api/config", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ sessionDir: settingsDir.value, sessionId: settingsId.value }),
+        body: JSON.stringify({
+          sessionDir: settingsDir.value,
+          zcodeDir: settingsZcodeDir.value,
+          sessionId: settingsId.value,
+          dshDir: settingsDshDir ? settingsDshDir.value : undefined,
+        }),
       });
       if (!res.ok) throw new Error("HTTP " + res.status);
+      const saved = await res.json().catch(() => ({}));
+      if (typeof saved.zcodeAvailable === "boolean") zcodeAvailable = saved.zcodeAvailable;
+      if (typeof saved.dshAvailable === "boolean") dshAvailable = saved.dshAvailable;
+      syncSourceSwitch();
       settingsStatus.textContent = "已保存，正在扫描会话…";
       const count = await loadAllFromBackend();
-      settingsStatus.textContent = count ? `已加载 ${count} 个会话` : "目录下未发现会话文件";
-      if (count) { preloadAll(); setTimeout(closeSettings, 800); }
+      settingsStatus.textContent = count
+        ? `已加载 ${count} 个会话（内容按需加载，消息统计由服务端后台补齐）`
+        : "目录下未发现会话文件";
+      if (count) setTimeout(closeSettings, 800);
     } catch (e) {
       settingsStatus.textContent = "保存失败：" + (e.message || e);
       settingsStatus.className = "modal-status err";
@@ -1440,9 +1623,11 @@
   apiRoot.addEventListener("click", (e) => { if (e.target === apiRoot) closeApiDoc(); });
 
   /* ---------- init ---------- */
+  syncSourceSwitch();
   renderSidebar();
   renderChat();
   (async () => {
+    await initCache();
     const ok = await backendAvailable();
     if (!ok) {
       showLoading("后端不可达，可手动导入 .jsonl 会话文件");

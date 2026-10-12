@@ -2,11 +2,12 @@
   "name": "agent-console",
   "version": "1.0.0",
   "private": true,
-  "description": "AI Agent 会话管理器 — 浏览 Claude Code .jsonl 会话、四维搜索、时间轴定位",
+  "description": "AI Agent 会话管理器 — 浏览 Claude Code .jsonl 与 zcode SQLite 会话、四维搜索、时间轴定位",
   "scripts": {
     "start": "node server.js"
   },
   "engines": {
     "node": ">=16"
-  }
+  },
+  "comment": "zcode 来源依赖 node:sqlite，需 Node >= 22.5；低于此版本 js/zcode.js 会静默降级，Claude 来源不受影响"
 }

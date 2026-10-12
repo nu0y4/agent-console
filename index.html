@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Agent Console — 会话管理器</title>
-<link rel="stylesheet" href="css/styles.css?v=39">
+<link rel="stylesheet" href="css/styles.css?v=50">
 </head>
 <body>
 
@@ -15,6 +15,13 @@
     <span class="brand-name">Agent Console</span>
     <span class="brand-sub">session manager</span>
   </div>
+
+  <!-- 会话来源多选：都亮 = 合并时间线 -->
+  <span class="src-switch" id="srcSwitch" title="选择会话来源">
+    <button class="src-opt on" data-source="claude" title="Claude Code 的 .jsonl 会话">Claude Code</button>
+    <button class="src-opt on" data-source="zcode" title="zcode 的 SQLite 会话">zcode</button>
+    <button class="src-opt on" data-source="dsh" title="dsh（DeepSeek Harness）的 zstd 会话">dsh</button>
+  </span>
 
   <div class="search-box">
     <div class="search-wrap" id="searchWrap">
@@ -110,7 +117,7 @@
     <div class="chat-empty" id="chatEmpty">
       <div class="empty-ring"></div>
       <h2>Agent Console</h2>
-      <p>导入 Claude Code 的 <code>.jsonl</code> 会话文件，<br>即可浏览每一轮思考、文本与工具调用。</p>
+      <p>浏览 Claude Code 的 <code>.jsonl</code> 与 zcode 的本地会话，<br>每一轮思考、文本与工具调用都在时间线上。</p>
       <button class="btn" id="emptyLoadBtn">
         <svg viewBox="0 0 16 16" class="ic"><path d="M8 2v8m0 0l-3-3m3 3l3-3"/><path d="M2 12v1.5h12V12"/></svg>
         导入会话文件
@@ -121,21 +128,21 @@
       <div class="timeline" id="timeline"></div>
     </div>
 
-    <div class="scrub" id="scrub" hidden>
-      <div class="scrub-top">
-        <span class="scrub-tick" id="scrubTick"></span>
-        <span class="scrub-range" id="scrubRange"></span>
-      </div>
-      <div class="scrub-track" id="scrubTrack">
-        <div class="scrub-content" id="scrubContent">
-          <div class="scrub-dots" id="scrubDots"></div>
+    <!-- 右侧轮次刻度栏，照着 dsh 的 TurnNavigator 做：
+         定距 10px 一行（TURN_SPACING_PX），每行一条 20×2 圆角刻度，
+         靠 scaleX 从右端长出来 —— 所以左边缘是整齐递进的，不会参差。
+         高度封顶 420px，超出则在轨道内滚动，两端 24px 渐变遮罩；
+         当前轮自动滚到居中，悬停出左侧预览卡。
+         实测源码：@deepseek-ai/dsh-client-ui-chat/lib/client.js -->
+    <div class="turn-rail" id="turnRail" hidden>
+      <div class="rail-frame" id="railFrame">
+        <div class="rail-scroller" id="railScroller">
+          <div class="rail-marks" id="railTrack"></div>
         </div>
-        <div class="scrub-marker"></div>
-        <div class="scrub-bubble" id="scrubBubble"></div>
-      </div>
-      <div class="scrub-labels">
-        <span class="scrub-start" id="scrubStart"></span>
-        <span class="scrub-end" id="scrubEnd"></span>
+        <div class="rail-preview" id="railPreview" hidden>
+          <div class="rail-preview-prompt" id="railPrompt"></div>
+          <div class="rail-preview-response" id="railResponse"></div>
+        </div>
       </div>
     </div>
   </main>
@@ -157,6 +164,16 @@
         <button class="btn mini" id="browseBtn" title="选文件夹（浏览器 File Picker）">浏览…</button>
       </div>
       <p class="field-hint" id="dirHint">扫描该目录（含子目录）下的 .jsonl 会话文件</p>
+
+      <label class="field-label" for="settingsZcodeDir">zcode 数据目录</label>
+      <input id="settingsZcodeDir" type="text" spellcheck="false"
+             placeholder="例如 C:\Users\sorye\.zcode\cli">
+      <p class="field-hint" id="zcodeHint">指向 zcode 配置目录，内含 <code>db/db.sqlite</code>（只读，不写入）</p>
+
+      <label class="field-label" for="settingsDshDir">dsh 数据目录</label>
+      <input id="settingsDshDir" type="text" spellcheck="false"
+             placeholder="例如 C:\Users\sorye\.dsh">
+      <p class="field-hint" id="dshHint">指向 dsh 配置目录，内含 <code>sessions/</code>（只读；解压出的 sidecar 缓存在 <code>.dsh-cache/</code>）</p>
 
       <label class="field-label" for="settingsId">默认会话 ID（可选）</label>
       <input id="settingsId" type="text" spellcheck="false" placeholder="留空则显示全部">
@@ -199,9 +216,9 @@
   </div>
 </div>
 
-<script src="js/highlighter.js?v=39"></script>
-<script src="js/parser.js?v=39"></script>
-<script src="js/session-cache.js?v=39"></script>
-<script src="js/app.js?v=39"></script>
+<script src="js/highlighter.js?v=50"></script>
+<script src="js/parser.js?v=50"></script>
+<script src="js/session-cache.js?v=50"></script>
+<script src="js/app.js?v=50"></script>
 </body>
 </html>

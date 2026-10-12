@@ -15,7 +15,6 @@
 
   --line:       oklch(0.87 0.012 215);
   --line-soft:  oklch(0.925 0.008 215);
-  --scrub-line: oklch(0.72 0.012 215);
 
   --teal:       oklch(0.62 0.11 215);
   --teal-soft:  oklch(0.62 0.11 215 / 0.12);
@@ -25,6 +24,7 @@
   --red:        oklch(0.52 0.170 25);
   --green:      oklch(0.48 0.135 150);
   --blue:       oklch(0.50 0.130 240);
+  --violet:     oklch(0.52 0.125 295);
 
   --mono: "JetBrains Mono", ui-monospace, "Cascadia Code", "SF Mono", Consolas, monospace;
   --sans: "Sora", -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
@@ -257,6 +257,46 @@ code, kbd, .mono { font-family: var(--mono); }
 .sort-opt:hover { color: var(--text); }
 .sort-opt.on { background: var(--teal); color: #fff; }
 
+/* --- source switch: the topbar twin of the sidebar sort switch ------------
+   Same bordered pill + teal-on language, sized for the 54px bar.  The one
+   deliberate difference is the divider between options: this control is
+   multi-select, so the two halves must read as independent toggles rather
+   than one segmented control. */
+.src-switch {
+  flex: none;
+  display: inline-flex; align-items: center;
+  margin-left: -8px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+  white-space: nowrap;
+}
+.src-opt {
+  height: 26px; padding: 0 11px;
+  border: none; background: transparent;
+  font: 600 11px var(--sans); letter-spacing: 0.02em;
+  color: var(--text-faint); cursor: pointer;
+  transition: background var(--dur), color var(--dur);
+  white-space: nowrap;
+}
+.src-opt + .src-opt { border-left: 1px solid var(--line); }
+.src-opt:hover { color: var(--text); background: var(--bg-hover); }
+.src-opt.on, .src-opt.on:hover { background: var(--teal); color: #fff; }
+.src-opt:disabled { opacity: 0.4; cursor: not-allowed; }
+.src-opt:disabled:hover { background: transparent; color: var(--text-faint); }
+
+/* source tag on a sidebar row — reads like the existing .si-tag chip */
+.src-badge {
+  flex: none;
+  font-family: var(--mono); font-size: 9px; font-weight: 600;
+  letter-spacing: 0.06em; text-transform: uppercase;
+  padding: 1px 5px; border-radius: 4px;
+  background: var(--bg-elev-2); border: 1px solid var(--line);
+  color: var(--text-faint);
+}
+.src-badge.src-zcode { color: var(--violet); border-color: var(--violet); }
+.src-badge.src-dsh { color: var(--blue); border-color: var(--blue); }
+
 .sidebar-group {
   font-size: 10px; letter-spacing: 0.08em; text-transform: uppercase;
   color: var(--text-faint);
@@ -387,121 +427,129 @@ code, kbd, .mono { font-family: var(--mono); }
 .jump-btn:disabled { opacity: 0.4; cursor: not-allowed; }
 
 /* ============================================================
-   Timeline scrubber — fixed center marker, scrolling timeline
+   右侧轮次刻度栏 (turn rail)
+   照着 dsh 的 TurnNavigator 做（源码见
+   node_modules/@deepseek-ai/dsh-client-ui-chat/lib/client.js，
+   编译自 TurnNavigator.module.css）。它是**定距虚拟列表**：
+   TURN_SPACING_PX=10 —— 每一轮恒占 10px 一行，所以刻度天生整齐。
+
+   关键在刻度怎么画：不是"每根各自一个宽度"，而是一条固定的 20×2 长条，
+   用 scaleX 从右端（transform-origin:100%）长出来：
+     基础 scaleX(.6) → 12px    未加载 scaleX(.4) → 8px
+     悬停 scaleX(.9) → 18px    当前   scaleX(1)  → 20px
+   因为共用同一条基准线、只改缩放，左端是逐级递进的 —— 这就是它看着规整的原因。
+   早先按真实像素偏移等比排 + 各画各的宽度，密处糊成一片、疏处留空，才叫参差。
    ============================================================ */
-.scrub {
-  padding: 8px 26px 10px;
-  border-top: 1px solid var(--line-soft);
-  background: var(--bg-elev-1);
-  user-select: none;
-}
-.scrub-top {
-  display: flex; align-items: baseline; gap: 10px;
-  margin-bottom: 6px;
-}
-.scrub-tick { flex: none; }
-.scrub-range { color: var(--teal-deep); font-weight: 600; font-family: var(--mono); font-size: 12px; }
-.scrub-track {
-  position: relative;
-  height: 54px;
-  overflow: hidden;
-  cursor: grab;
-}
-.scrub-track:active { cursor: grabbing; }
-/* the timeline strip translates underneath a fixed center marker.
-   Clean horizontal baseline only — no vertical tick-wall. */
-.scrub-content {
-  position: absolute; top: 0; bottom: 0;
-  left: 50%;
-  will-change: transform;
-  background: linear-gradient(var(--scrub-line), var(--scrub-line)) center / 100% 1px no-repeat;
-}
-.scrub-dots {
-  position: absolute; inset: 0;
-  pointer-events: none;
-}
-/* 三级刻度：细(minor) / 中(mid) / 粗(major) —— 刻度基线在上方 1/3 处 */
-.scrub-dot {
-  position: absolute; top: 16px;
-  width: 1px; height: 7px;
-  transform: translateX(-50%);
-  background: var(--text-faint);
-  border-radius: 1px;
-  box-sizing: border-box;
-}
-.scrub-dot.mid { height: 11px; background: var(--text-dim); }
-.scrub-dot.major { height: 15px; width: 1.5px; background: var(--text-dim); }
-.scrub-timelabel {
-  position: absolute; top: 30px;
-  transform: translateX(-50%);
-  font-family: var(--mono); font-size: 9px; color: var(--text-faint);
-  pointer-events: none;
-  white-space: nowrap;
-}
-/* 事件点（消息位置），按类型着色 */
-.scrub-ev {
-  position: absolute; top: 7px;
-  width: 6px; height: 6px;
-  border-radius: 50%;
-  background: oklch(0.72 0.13 68);
-  border: 1.5px solid var(--bg-elev-1);
-  transform: translateX(-50%);
-  pointer-events: none;
-  z-index: 1;
-}
-.scrub-ev.ev-user { background: var(--blue); }
-.scrub-ev.ev-ai { background: var(--teal); }
-.scrub-ev.ev-tool { background: oklch(0.72 0.13 68); }
-.scrub-ev.ev-thinking { background: oklch(0.55 0.015 220); }
-/* 中央固定指针：短竖线 + 顶部圆点（对齐刻度基线 16px） */
-.scrub-marker {
-  position: absolute; top: 0; bottom: 0; left: 50%;
-  width: 2px;
-  transform: translateX(-50%);
-  background: var(--teal);
-  pointer-events: none;
-  z-index: 3;
-}
-.scrub-marker::after {
-  content: ""; position: absolute; top: 16px; left: 50%;
-  width: 9px; height: 9px; border-radius: 50%;
-  transform: translate(-50%, -50%);
-  background: var(--teal);
-  border: 2px solid var(--bg-elev-1);
-  box-shadow: 0 1px 3px oklch(0.2 0.05 220 / 0.35);
-}
-.scrub-bubble {
+.turn-rail {
   position: absolute;
-  bottom: 100%;
-  left: 50%;
-  transform: translateX(-50%);
-  margin-bottom: 4px;
-  padding: 3px 8px;
-  background: var(--bg-elev-3);
-  border: 1px solid var(--line);
-  border-radius: 5px;
-  font-family: var(--mono); font-size: 10px;
-  color: var(--text);
-  white-space: nowrap;
-  opacity: 0;
-  transition: opacity 120ms var(--ease-out);
+  inset: 0;
+  z-index: 7;
+  user-select: none;
+  pointer-events: none;     /* 空白处不挡聊天，只有轨道本身可点 */
+}
+/* 轨道：垂直居中，右边缘让开原生滚动条（JS 给 right）。
+   高度封顶 420px，超出就在轨道内滚动 —— 同 dsh 的
+   max-height: min(band - 64px, 420px)。 */
+.rail-frame {
+  position: absolute;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 28px;
+  max-height: min(420px, 100% - 64px);
+  contain: layout;
+  pointer-events: auto;
+  cursor: pointer;
+}
+.rail-scroller {
+  position: relative;
+  max-height: inherit;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: none;
+}
+.rail-scroller::-webkit-scrollbar { display: none; }
+/* 两端 24px 渐变遮罩（FADE_PX），表示"上面/下面还有" */
+.rail-fade-top { mask-image: linear-gradient(#0000 0, #000 24px 100%); }
+.rail-fade-bottom { mask-image: linear-gradient(#000 0 calc(100% - 24px), #0000 100%); }
+.rail-fade-top.rail-fade-bottom {
+  mask-image: linear-gradient(#0000 0, #000 24px calc(100% - 24px), #0000 100%);
+}
+.rail-marks { position: relative; }
+
+/* 一行的点击热区：10px 高（= TURN_SPACING_PX），横跨整宽 */
+.rail-mark {
+  position: absolute;
+  top: 0; left: 0; right: 0;
+  height: 10px;
+  padding: 0;
+  border: 0;
+  background: none;
+  border-radius: 8px;
+  cursor: pointer;
+}
+/* 真正的刻度：固定 20×2 圆角条，右对齐，靠 scaleX 变化 */
+.rail-mark::before {
+  content: "";
+  position: absolute;
+  top: 50%; right: 0;
+  width: 20px;
+  height: 2px;
+  border-radius: 2px;
+  background: var(--line);
+  transform-origin: 100%;
+  transform: translateY(-50%) scaleX(.6);
+  transition: transform 140ms var(--ease-out), background-color 140ms var(--ease-out);
+}
+/* 悬停预览中的那一轮 */
+.rail-mark.preview::before {
+  background: var(--text-dim);
+  transform: translateY(-50%) scaleX(.9);
+}
+/* 当前所在的轮次：拉满 + 主色 */
+.rail-mark.active::before {
+  background: var(--teal);
+  transform: translateY(-50%) scaleX(1);
+}
+.rail-mark:focus-visible { outline: none; }
+.rail-mark:focus-visible::before {
+  background: var(--teal);
+  transform: translateY(-50%) scaleX(1);
+}
+
+/* 悬停预览卡：浮在轨道左侧，1 行用户提问 + 3 行 AI 回复 */
+.rail-preview {
+  position: absolute;
+  right: calc(100% + 10px);
+  width: min(300px, 42vw);
+  box-sizing: border-box;
+  padding: 10px 12px;
+  border-radius: var(--radius-lg);
+  background: var(--bg-elev-1);
+  box-shadow: 0 18px 50px oklch(0.20 0.05 220 / 0.18), 0 0 0 1px oklch(0.45 0 0 / 0.04);
+  color: var(--text-hi);
   pointer-events: none;
+  overflow: hidden;
+  transition: top 140ms var(--ease-out);
+  animation: railPreviewIn 120ms var(--ease-out);
 }
-.scrub.dragging .scrub-bubble { opacity: 1; }
-/* edge fade so the ends look like a real timeline viewport */
-.scrub-track::before, .scrub-track::after {
-  content: ""; position: absolute; top: 0; bottom: 0; width: 40px;
-  pointer-events: none; z-index: 2;
+.rail-preview[hidden] { display: none; }
+@keyframes railPreviewIn { from { opacity: 0; transform: translateX(4px); } to { opacity: 1; transform: none; } }
+.rail-preview-prompt {
+  font-size: 13px; font-weight: 600;
+  display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 1;
+  overflow: hidden;
 }
-.scrub-track::before { left: 0; background: linear-gradient(to right, var(--bg-elev-1), transparent); }
-.scrub-track::after { right: 0; background: linear-gradient(to left, var(--bg-elev-1), transparent); }
-.scrub-labels {
-  display: flex; justify-content: space-between; align-items: center;
-  gap: 10px; margin-top: 4px;
-  font-family: var(--mono); font-size: 10.5px; color: var(--text-faint);
+.rail-preview-response {
+  margin-top: 4px;
+  font-size: 12px; color: var(--text-dim);
+  display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3;
+  overflow: hidden;
 }
-.scrub-start { text-align: left; }
-.scrub-end { text-align: right; }
+
+/* 窄屏藏起来（dsh 用 container query ≤900px），免得压住正文 */
+@media (max-width: 900px) { .turn-rail { display: none; } }
+
+
 
 /* ============================================================
    Settings modal
@@ -625,6 +673,14 @@ code, kbd, .mono { font-family: var(--mono); }
 .msg--assistant { align-items: flex-start; }
 .msg--user .msg-head { flex-direction: row-reverse; }
 @keyframes rise { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+/* Every renderChat rebuilds the whole timeline, so the entrance animation
+   replays on every row each time — fine for a short conversation, but a big
+   transcript is thousands of simultaneous animations that fight the scroll.
+   renderChat adds .no-anim once a session is past a few hundred messages. */
+.timeline.no-anim .msg,
+.timeline.no-anim .tool-block,
+.timeline.no-anim .thinking-block,
+.timeline.no-anim .system-block { animation: none; }
 
 .msg-head {
   display: flex; align-items: center; gap: 9px;
@@ -636,10 +692,12 @@ code, kbd, .mono { font-family: var(--mono); }
   padding: 3px 9px; border-radius: 5px;
 }
 .role-badge::before { content: ""; width: 7px; height: 7px; border-radius: 50%; }
+/* No glow here on purpose: this dot renders once per message, and a blurred
+   box-shadow on a few thousand of them is a few thousand blurs to rasterize. */
 .role-badge.user { color: var(--blue); background: oklch(0.50 0.130 240 / 0.12); }
-.role-badge.user::before { background: var(--blue); box-shadow: 0 0 8px var(--blue); }
+.role-badge.user::before { background: var(--blue); }
 .role-badge.assistant { color: var(--teal-deep); background: var(--teal-soft); }
-.role-badge.assistant::before { background: var(--teal); box-shadow: 0 0 8px var(--teal); }
+.role-badge.assistant::before { background: var(--teal); }
 .msg-time { font-family: var(--mono); font-size: 11px; color: var(--text-faint); }
 
 .msg-content { display: flex; flex-direction: column; gap: 12px; }
@@ -810,4 +868,6 @@ mark { background: oklch(0.62 0.11 215 / 0.22); color: inherit; border-radius: 2
   .sidebar { display: none; }
   .search-trigger { flex: 1; }
   .top-actions .btn span { display: none; }
+  .brand-sub { display: none; }
+  .src-opt { padding: 0 8px; font-size: 10px; }
 }
