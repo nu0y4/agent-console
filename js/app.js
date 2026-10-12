@@ -633,38 +633,49 @@
 
     let pointerInside = false;
     let previewIdx = -1;
+    // 全扫一遍摘干净，而不是只摘"上一个下标"。之前把 previewIdx 在摘类之前
+    // 就赋成了新值，于是摘的永远是新的那个；配合只清一个下标，每划过一个刻度
+    // 就永久多留一根拉长的条缩不回去。
+    function clearPreviewMarks() {
+      for (const m of track.querySelectorAll(".rail-mark.preview")) m.classList.remove("preview");
+    }
+    // 把预览卡贴到第 i 行的旁边。用**实测高度**算，写死 100px 会偏十几像素、
+    // 而且过早顶到上下端卡住不动（之前"不跟随"就是这个）。
+    function positionPreview(i) {
+      const ph = preview.offsetHeight;
+      const h = scroller.clientHeight;
+      const center = topOf(i) + RAIL_SPACING / 2 - scroller.scrollTop;
+      preview.style.top = `${Math.max(0, Math.min(h - ph, center - ph / 2))}px`;
+    }
     function showPreview(i) {
-      if (i === previewIdx) return;
-      previewIdx = i;
       const t = turns[i];
-      if (!t) { preview.hidden = true; return; }
-      const msg = s.messages[t.mi] || {};
-      const text = String(msg.text || "").replace(/\s+/g, " ").trim();
-      promptEl.textContent = text || "（无文本）";
-      // 这一轮的 AI 回复：往后找第一条 assistant 文本
-      let reply = "";
-      for (let k = t.mi + 1; k < s.messages.length; k++) {
-        const m = s.messages[k];
-        if (m.kind === "user") break;
-        if (m.kind === "assistant") {
-          const blk = (m.blocks || []).find((b) => b.kind === "text" && b.text);
-          if (blk) { reply = String(blk.text).replace(/\s+/g, " ").trim(); break; }
+      if (!t) { hidePreview(); return; }
+      if (i !== previewIdx) {
+        clearPreviewMarks();
+        t.el.classList.add("preview");
+        previewIdx = i;
+        const msg = s.messages[t.mi] || {};
+        const text = String(msg.text || "").replace(/\s+/g, " ").trim();
+        promptEl.textContent = text || "（无文本）";
+        // 这一轮的 AI 回复：往后找第一条 assistant 文本
+        let reply = "";
+        for (let k = t.mi + 1; k < s.messages.length; k++) {
+          const m = s.messages[k];
+          if (m.kind === "user") break;
+          if (m.kind === "assistant") {
+            const blk = (m.blocks || []).find((b) => b.kind === "text" && b.text);
+            if (blk) { reply = String(blk.text).replace(/\s+/g, " ").trim(); break; }
+          }
         }
+        responseEl.textContent = reply || "";
+        responseEl.hidden = !reply;
+        preview.hidden = false;   // 先显出来才有高度可量
       }
-      responseEl.textContent = reply || "";
-      responseEl.hidden = !reply;
-      // 贴在光标那一行的旁边，且不越出轨道上下端
-      const h = frame.clientHeight;
-      const rowTop = topOf(i) + RAIL_SPACING / 2 - scroller.scrollTop;
-      const ph = Math.min(100, frame.clientHeight);
-      preview.style.top = `${Math.max(0, Math.min(h - ph, rowTop - ph / 2))}px`;
-      preview.hidden = false;
-      if (previewIdx >= 0 && turns[previewIdx]) turns[previewIdx].el.classList.remove("preview");
-      t.el.classList.add("preview");
+      positionPreview(i);         // 内容没变也要重算：轨道可能刚跟着滚动挪过
     }
     function hidePreview() {
       preview.hidden = true;
-      if (previewIdx >= 0 && turns[previewIdx]) turns[previewIdx].el.classList.remove("preview");
+      clearPreviewMarks();
       previewIdx = -1;
     }
 

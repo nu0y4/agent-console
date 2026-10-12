@@ -523,6 +523,7 @@ code, kbd, .mono { font-family: var(--mono); }
   width: min(300px, 42vw);
   box-sizing: border-box;
   padding: 10px 12px;
+  max-height: 100px;        /* dsh 的 --turn-preview-height */
   border-radius: var(--radius-lg);
   background: var(--bg-elev-1);
   box-shadow: 0 18px 50px oklch(0.20 0.05 220 / 0.18), 0 0 0 1px oklch(0.45 0 0 / 0.04);
